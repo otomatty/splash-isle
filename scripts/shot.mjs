@@ -22,7 +22,7 @@ page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 if (args.includes('--play')) await useOfflineGuest(page);
 await page.goto(url, { waitUntil: 'load' });
-await page.waitForSelector('#login:not(.hidden), #title:not(.hidden)', { visible: true });
+await page.waitForSelector('#title:not(.hidden), #btnLogin:enabled:not(.hidden), #btnGuest:enabled:not(.hidden)', { visible: true });
 mkdirSync('shots', { recursive: true });
 for (let i = 0; i < args.length; i++) {
   const a = args[i], v = args[i + 1];
