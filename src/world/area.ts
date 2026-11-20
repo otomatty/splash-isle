@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GeoBatch, M, addSway, box, buildBushGeometry, buildGrassTuftGeometry, buildPalmGeometry, buildRockGeometry, cone, cyl, sph } from './props';
-import { Colliders, type Box } from './colliders';
+import { Colliders, slideAlongBoundary, type Body, type Box } from './colliders';
 import { heightAt, normalAt, pathDistance, type TerrainDef } from './terrain';
 import { Goop } from './goop';
 import { mulberry32 } from '../engine/noise';
@@ -148,6 +148,12 @@ export abstract class Area {
 
   /** このエリアの地形（エリアを作る前に Terrain.apply で焼き込んでおく） */
   abstract readonly terrain: TerrainDef;
+
+  /** 海中・陸上・空中に共通する移動範囲。エリアの切り替えは入口から行う。 */
+  confinePlayer(b: Body, radius = this.terrain.world / 2 - 20): void {
+    const distance = Math.hypot(b.x, b.z);
+    if (distance + b.radius > radius) slideAlongBoundary(b, b.x / distance, b.z / distance, radius);
+  }
 
   /** 使い終わったエリアの GPU リソースを解放する */
   dispose(): void {
@@ -304,7 +310,17 @@ export abstract class Area {
     const toWorld = (lx: number, lz: number): [number, number] => [x + lx * cos + lz * sin, z - lx * sin + lz * cos];
     const trim = 0xfbf7ee;
 
-    b.add(box(w, H, d), wall, M(0, H / 2, 0), { ao: 0.72, jitter: 0.05 });
+    const floors = h >= 8 ? 3 : 2;
+    // 広場の屋根・外階段は足場。外形の高さを保ち、短い家は上階の天井高を詰める。
+    const firstCeiling = Math.max(2.55, h / floors);
+    const upperHeight = (h - firstCeiling) / (floors - 1);
+    b.add(box(w, firstCeiling + g, d), wall, M(0, (firstCeiling + g) / 2, 0), { ao: 0.72 });
+    const upperWall = new THREE.Color(wall).lerp(new THREE.Color(trim), 0.24);
+    for (let storey = 1; storey < floors; storey++) {
+      const sill = g + firstCeiling + (storey - 1) * upperHeight;
+      b.add(box(w + 0.06, upperHeight, d + 0.06), upperWall, M(0, sill + upperHeight / 2, 0), { ao: 0.89 });
+      b.add(box(w + 0.24, 0.14, d + 0.24), trim, M(0, sill, 0));
+    }
     b.add(box(w + 0.22, 0.95, d + 0.22), 0xa39078, M(0, 0.475, 0), { ao: 0.75 });
     b.add(box(w + 0.26, 0.14, d + 0.26), accent, M(0, H - 0.32, 0));
     // 屋上の立ち上がり
@@ -345,7 +361,7 @@ export abstract class Area {
       return M(-w / 2, y, u, -Math.PI / 2);
     };
     const flowerCols = [0xe8483f, 0xf6c443, 0xf08ab0, 0xffffff, 0xb05ad8];
-    const win = (f: 'f' | 'b' | 'l' | 'r', u: number, y: number, flowers: boolean) => {
+    const win = (f: 'f' | 'b' | 'l' | 'r', u: number, y: number) => {
       const m = face(f, u, y);
       b.add(box(1.02, 1.36, 0.14), trim, mul(m, M(0, 0, 0.02)));
       gl.add(box(0.8, 1.14, 0.16), 0x1c3b55, mul(m, M(0, 0, 0.03)));
@@ -354,26 +370,33 @@ export abstract class Area {
       b.add(box(0.4, 1.24, 0.07), accent, mul(m, M(-0.74, 0, 0.07)), { ao: 0.85 });
       b.add(box(0.4, 1.24, 0.07), accent, mul(m, M(0.74, 0, 0.07)), { ao: 0.85 });
       b.add(box(1.3, 0.09, 0.3), STONE, mul(m, M(0, -0.74, 0.12)));
-      if (flowers) {
-        b.add(box(1.05, 0.24, 0.3), TERRACOTTA, mul(m, M(0, -0.58, 0.3)));
-        for (let i = 0; i < 5; i++) {
-          b.add(sph(0.13, 6, 5), 0x2f7a22, mul(m, M(-0.4 + i * 0.2, -0.42, 0.3)));
-          b.add(sph(0.075, 6, 4), flowerCols[(i + idx) % flowerCols.length], mul(m, M(-0.4 + i * 0.2 + 0.03, -0.31, 0.34)));
-        }
-      }
     };
-    const floors = h >= 6 ? (h >= 8 ? 3 : 2) : 1;
-    for (let f = 0; f < floors; f++) {
-      const y = g + 1.75 + f * 2.7;
-      if (f > 0 || w >= 7) {
-        win('f', -w / 2 + 1.5, y, f > 0);
-        win('f', w / 2 - 1.5, y, f > 0);
+    const groundWindowY = g + 1.75;
+    if (w >= 7) {
+      win('f', -w / 2 + 1.5, groundWindowY);
+      win('f', w / 2 - 1.5, groundWindowY);
+    }
+    win('l', 0, groundWindowY);
+    win('r', stairs ? -d / 2 + 1.4 : 0, groundWindowY + (stairs ? 0.4 : 0));
+    win('b', w >= 8 ? -1.8 : 0, groundWindowY);
+    if (w >= 8) win('b', 1.8, groundWindowY);
+
+    // 上階の窓は鎧戸・ガラス・桟にまとめ、遠くからも階が読み取れるようにする。
+    const tall = Math.min(1.25, upperHeight * 0.6);
+    for (let storey = 1; storey < floors; storey++) {
+      const y = g + firstCeiling + (storey - 0.5) * upperHeight;
+      const upstairs = (side: 'f' | 'b' | 'l' | 'r', u: number) => {
+        const frame = face(side, u, y);
+        b.add(box(1.44, tall + 0.10, 0.08), accent, mul(frame, M(0, 0, 0.055)));
+        gl.add(box(0.84, tall, 0.08), 0x274c60, mul(frame, M(0, 0, 0.11)));
+        b.add(box(0.85, 0.065, 0.055), trim, mul(frame, M(0, 0.17, 0.16)));
+      };
+      for (const side of ['f', 'b'] as const) {
+        upstairs(side, -w * 0.25);
+        upstairs(side, w * 0.25);
       }
-      if (f > 0 && w >= 8) win('f', 0, y, true);
-      win('l', 0, y, false);
-      win('r', stairs ? -d / 2 + 1.4 : 0, y + (stairs ? 0.4 : 0), false);
-      win('b', w >= 8 ? -1.8 : 0, y, false);
-      if (w >= 8) win('b', 1.8, y, false);
+      upstairs('l', 0);
+      upstairs('r', stairs ? -d / 2 + 1.4 : 0);
     }
 
     if (dome) {

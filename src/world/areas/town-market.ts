@@ -129,6 +129,20 @@ function bakery(b: GeoBatch, detail: GeoBatch, colliders: Colliders): void {
   b.add(box(0.14, 1.20, 0.09), OAK, M(-3.37, 1.86, 0.05));
   b.add(box(0.14, 0.08, 1.94), OAK, M(-3.37, 1.96, 0.05));
   b.add(box(0.32, 0.13, 2.27), BRICK, M(-3.31, 1.17, 0.05));
+  // 石窯の上はパン職人の仕事部屋。煙道の側と店先を後退させ、下屋から上階へ登れる。
+  b.add(box(3.62, 2.48, 3.50), 0xf1d8a9, M(0.94, 5.08, -0.24), { ao: 0.86 });
+  b.add(box(3.95, 0.22, 3.82), BRICK, M(0.94, 6.42, -0.24));
+  colliders.addBox(x + 0.94, y + 5.08, z - 0.24, 3.62, 2.48, 3.50);
+  colliders.addBox(x + 0.94, y + 6.42, z - 0.24, 3.95, 0.22, 3.82);
+  for (const side of [-1, 1]) {
+    const wallZ = -0.24 + side * 1.78;
+    for (const wx of [0.12, 1.76]) {
+      b.add(box(1.19, 1.42, 0.14), TEAL, M(wx, 5.08, wallZ));
+      b.add(box(0.88, 1.16, 0.11), 0x355464, M(wx, 5.08, wallZ + side * 0.10));
+      detail.add(box(0.89, 0.08, 0.08), trim, M(wx, 5.21, wallZ + side * 0.17));
+    }
+    b.add(box(0.11, 1.16, 1.26), 0x355464, M(0.94 + 1.82 * side, 5.09, -0.31));
+  }
   // 背の違う煙突の輪郭が、通りから店の目印になる。
   b.add(box(0.95, 1.45, 0.99), wall, M(-1.74, 4.47, -0.7), { ao: 0.8 });
   b.add(box(1.13, 0.15, 1.12), BRICK, M(-1.74, 5.15, -0.7));

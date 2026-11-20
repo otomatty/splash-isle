@@ -103,8 +103,20 @@ const r = await page.evaluate(async () => {
   check('町: 広場から灯台の丘の上まで歩いて行ける', Math.hypot(B.x + 104, B.z + 74) < 14 && B.y > 28, `到達 (${f1(B.x)}, ${f1(B.y)}, ${f1(B.z)})`);
   place(100, 0); walk(town.pierEnd.x - 2, 0, 30);
   check('町: 港から桟橋の先まで歩いて行ける', B.x > town.pierEnd.x - 4 && Math.abs(B.y - 1.5) < 0.3, `到達 (${f1(B.x)}, ${f1(B.y)})`);
+  // 帳場は作業場の真上。屋根へ飛ばずに地面から裏階段を往復する。
+  place(112, -16.37);
+  const harborGrade = B.y;
+  walk(120, -16.37, 6);
+  walk(120, -13.0, 4);
+  const insideOffice = Math.abs(B.x - 120) < 0.8 && B.z > -14 && B.y > harborGrade + 2.5;
+  walk(120, -16.7, 4);
+  walk(111.5, -16.37, 6);
+  check('町: 港の漁協二階へ歩いて入り、裏階段で地上に戻れる', insideOffice && B.x < 112.6 && Math.abs(B.y - harborGrade) < 0.7);
   // 目印を通る街路の折れ点を順に歩き、建物や小物で途中が塞がれていないか確かめる。
-  for (const [label, x, z] of [['郵便局前の通り', 0, -45], ['港の荷車道', 121, -6]]) {
+  for (const [label, x, z] of [
+    ['郵便局前の通り', 0, -45], ['港の荷車道', 121, -6],
+    ['山側の周回路', -63, -57], ['南東街区の海岸通り', 98, 39],
+  ]) {
     const street = town.terrain.streets.find((s) => s.pts.some(([px, pz]) => Math.hypot(px - x, pz - z) < 3));
     const name = `町: ${label}を端から端まで歩ける`;
     if (!street || street.pts.length < 2) { check(name, false, '街路が見つからない'); continue; }
@@ -122,6 +134,60 @@ const r = await page.evaluate(async () => {
     walk(p.front.x, p.front.z, 6);
     check(`町: ${p.def.label}の入口の前まで歩いて行ける`, Math.hypot(B.x - p.front.x, B.z - p.front.z) < 1.3, `${f1(before)}m → ${f1(Math.hypot(B.x - p.front.x, B.z - p.front.z))}m`);
   }
+
+  // 浜の木道から入水。歩行と同じ入力で浅瀬・遊泳・上陸が切り替わる。
+  place(0, 106);
+  P.tank = 10;
+  walk(0, 159, 17);
+  check('町: ビーチから海へ泳ぎ出て水を補給できる', B.z > 156 && P.swimming && Math.abs(B.y + 0.62) < 0.15 && P.tank > 90);
+  walk(0, 113, 17);
+  check('町: 泳いで浅瀬を抜け、ビーチへ歩いて戻れる', B.z < 115 && P.grounded && !P.swimming);
+
+  // 休憩台の手前まで泳いで、水面からジャンプして乗る。
+  place(15, 145);
+  g.cam.yaw = Math.PI;
+  key('KeyW');
+  for (let i = 0; i < 240 && B.z < 153.4; i++) tick();
+  const jumpedFromWater = P.swimming;
+  key('Space');
+  for (let i = 0; i < 22; i++) {
+    if (B.z >= 154.85) key('KeyW', false);
+    tick();
+  }
+  key('Space', false);
+  key('KeyW', false);
+  for (let i = 0; i < 90; i++) tick();
+  check('町: 海からジャンプして休憩台に乗れる', jumpedFromWater && P.grounded && !P.swimming && Math.abs(B.y - 0.365) < 0.05);
+
+  // 境界を縮めても、北岸のヒトデや沖のコースの報酬を含めて全収集地点を残す。
+  const items = [...town.starfish, ...town.shells, ...town.refills, ...town.gems.map(gem => gem.pos)];
+  check('町: 全ての収集地点にプレイヤーの体が収まる', items.every(pos => {
+    const probe = { ...B, x: pos.x, y: pos.y, z: pos.z };
+    town.confinePlayer(probe);
+    return Math.hypot(probe.x - pos.x, probe.z - pos.z) < 0.001;
+  }));
+
+  // 沖では外向きの速度だけが止まり、浜に向き直せる。
+  P.teleport(0, -0.62, 215, 0);
+  walk(0, 235, 5);
+  check('町: 泳いで沖の見えない壁を越えられない', B.z > 218 && B.z <= 219 - B.radius + 0.001 && P.swimming);
+  walk(10, 205, 6);
+  check('町: 沖の境界から斜めに泳いで戻れる', B.z < 207 && B.x > 8);
+
+  // 山側の壁は高度によらず働く。斜めに当てて、壁に沿う方向には動けることも確かめる。
+  const ridgeX = -80, ridgeZ = -161 - ridgeX / 4;
+  P.teleport(ridgeX, hAt(ridgeX, ridgeZ) + 24, ridgeZ + 1.5, 0);
+  g.cam.yaw = 0;
+  key('KeyW');
+  let touched = false, crossed = false;
+  for (let i = 0; i < 75; i++) {
+    tick();
+    const clearance = (644 + B.x + 4 * B.z) / Math.sqrt(17) - B.radius;
+    if (clearance < -0.001) crossed = true;
+    if (clearance < 0.01 && !P.grounded && B.y > hAt(B.x, B.z) + 1) touched = true;
+  }
+  key('KeyW', false);
+  check('町: 空中でも山側の境界に沿って進み、遠景の地区へ抜けない', !crossed && touched && B.x > ridgeX + 0.6 && g.cur.area === town);
 
   // ═══ ゆけむり山 ═══
   await go('volcano', 0);
@@ -159,8 +225,13 @@ const r = await page.evaluate(async () => {
     place(0, 93); walk(0, 76, 20);
     check('そよかぜ台地: ふもとから階段で村へ上がれる', Math.abs(B.y - 8) < 0.4, `高さ ${f1(B.y)}m`);
     const b0 = edge(M[0], M[1], 5), b1 = edge(M[1], M[0], 6);
+    // 橋の出口のすぐ脇にスミボウがいる。到達性の検査中だけ外し、ノックバックを除いて対岸への着地を測る。
+    g.cur.enemies.clear();
     place(b0[0], b0[1]); walk(b1[0], b1[1], 30);
-    check('そよかぜ台地: 吊り橋を歩いて2つ目の台地へ', Math.abs(B.y - 15) < 0.4, `高さ ${f1(B.y)}m`);
+    check('そよかぜ台地: 吊り橋を歩いて2つ目の台地へ',
+      P.grounded && Math.hypot(B.x - b1[0], B.z - b1[1]) < 1 && Math.abs(B.y - M[1].h) < 0.4,
+      `到達 (${f1(B.x)}, ${f1(B.y)}, ${f1(B.z)})`);
+    g.cur.enemies.spawnAll();
     const mv = a.movers.map(fromMover);
     const e = (i, j, top) => { const p = edge(M[i], M[j], 2.0); return rect(p[0], p[1], 1.4, 1.4, top); };
     chain('そよかぜ台地: 気球の足場（2つ目→3つ目）', [e(1, 2, 15), ...mv.slice(0, 5), e(2, 1, 23)]);

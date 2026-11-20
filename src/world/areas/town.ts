@@ -2,11 +2,16 @@ import * as THREE from 'three';
 import { GeoBatch, M, box, cone, cyl, sph, textTexture } from '../props';
 import { Area, BLUE, STONE, TEAL, TERRACOTTA, WALLS, WOOD, WOOD_DARK, mul, type AreaKey, type Look } from '../area';
 import { DEEP, DEFAULT_PALETTE, heightAt, pavedDistance, type PathDef, type TerrainDef } from '../terrain';
+import { beachShelf, buildSwimBeach, inBeachAccess } from './town-beach';
+import { blockCourts, blockStreets, buildTownBlocks } from './town-blocks';
+import { buildTownHorizon, mainlandHeight, TOWN_WORLD } from './town-horizon';
+import { buildOutskirts, outskirtPaths } from './town-outskirts';
 import { buildPostRow, inPostRow } from './town-post-row';
 import { buildPostOffice, postRoad, postSquare } from './town-post-office';
 import { buildTownMarket } from './town-market';
 import { buildHarborYard, inHarborYard } from './town-harbor';
 import { buildResidentialLane, residentialWalks } from './town-neighborhood';
+import { slideAlongBoundary, type Body } from '../colliders';
 import { Goop, scatterGoop } from '../goop';
 import { fbm, lerp, mulberry32, sstep } from '../../engine/noise';
 
@@ -45,7 +50,8 @@ function townHeight(x: number, z: number): number {
   // 沖の小島
   const di = Math.hypot(x - ISLET.x, z - ISLET.z);
   h = Math.max(h, 2.6 - ((di * di) / (15 * 15)) * 3.4);
-  return h;
+  if (z < -104) h = Math.max(h, mainlandHeight(x, z));
+  return beachShelf(x, z, h);
 }
 
 // 貝がらの位置と保存済みIDは、この順番の通りに対応する。
@@ -58,16 +64,18 @@ const shellStreets: PathDef[] = [
   { pts: [[-12, 84], [-52, 58], [-64, 34]], width: 5 },
 ];
 
+const shellPaths: PathDef[] = [
+  { pts: [[-58, -41], [-72, -52], [-86, -62], [-98, -70]], width: 2.2 }, // 灯台へ
+  { pts: [[0, 96], [-3, 112], [2, 128]], width: 2.4 }, // 浜辺へ
+  { pts: [[106, 0], [130, 1], [150, 0], [160, 0]], width: 2.6 }, // 桟橋へ
+];
+
 export const TOWN_TERRAIN: TerrainDef = {
-  world: 512,
+  world: TOWN_WORLD,
   raw: townHeight,
-  paths: [
-    { pts: [[-58, -41], [-72, -52], [-86, -62], [-98, -70]], width: 2.2 }, // 灯台へ
-    { pts: [[0, 96], [-3, 112], [2, 128]], width: 2.4 }, // 浜辺へ
-    { pts: [[106, 0], [130, 1], [150, 0], [160, 0]], width: 2.6 }, // 桟橋へ
-  ],
+  paths: [...shellPaths, ...blockCourts, ...outskirtPaths],
   streets: [
-    ...shellStreets, postRoad, ...residentialWalks,
+    ...shellStreets, postRoad, ...residentialWalks, ...blockStreets,
     { pts: [[106, 0], [106, -6.2], [121, -6.2]], width: 3 },
   ],
   plazas: [
@@ -122,10 +130,13 @@ export class Town extends Area {
     this.buildBeach();
     this.buildSigns();
     this.finishStatic();
+    buildTownBlocks(this.root, this.matMatte, this.colliders, this.terrain);
+    buildOutskirts(this.root, this.matMatte, this.colliders, this.detailMeshes, this.softShadow);
+    this.root.add(buildTownHorizon());
     const hillD = (x: number, z: number) => Math.hypot(x - HILL.x, z - HILL.z);
     this.scatter({
-      radius: 172, palms: 120, bushes: 210, grass: 17000, flowers: 1600, shoreRocks: 44, seed: 20261120,
-      avoid: (x, z) => inPostRow(x, z) || inHarborYard(x, z) || pavedDistance(x, z) < 2.6
+      radius: 172, palms: 52, bushes: 80, grass: 3700, flowers: 370, shoreRocks: 44, seed: 20261120,
+      avoid: (x, z) => inBeachAccess(x, z) || inPostRow(x, z) || inHarborYard(x, z) || pavedDistance(x, z) < 2.6
         || hillD(x, z) < 10 || (Math.abs(z) < 5 && x > 150) || Math.hypot(x - ISLET.x, z - ISLET.z) < 16,
       palmH: [1.3, 13], grassFrom: 2.6,
       hills: [{ x: HILL.x, z: HILL.z, r0: 12, r1: 40, count: 24 }],
@@ -140,6 +151,13 @@ export class Town extends Area {
     this.placeNpcs();
     this.placeGoop();
     this.placeCollectibles();
+  }
+
+  override confinePlayer(b: Body): void {
+    // 桟橋のコース・沖の小島（約198m）を周りから泳いで回れる余裕を取る。
+    super.confinePlayer(b, 219);
+    // 北西は山麓で止め、北東は北岸の大岩まで開ける。境界線は z = -161 - x/4。
+    slideAlongBoundary(b, -1 / Math.sqrt(17), -4 / Math.sqrt(17), 644 / Math.sqrt(17));
   }
 
   /** 店先の品物などは地区ごとにまとめ、低品質と水面の反射では省く。 */
@@ -363,11 +381,21 @@ export class Town extends Area {
     this.starfish[4] = new THREE.Vector3(ix - 9, heightAt(ix - 9, iz + 4) + 0.5, iz + 4);
   }
 
+  /** 砂浜の起伏を変えても波打ち際から同じ距離に置く。 */
+  private beachPoint(degrees: number, setback: number): THREE.Vector3 {
+    const angle = degrees * Math.PI / 180;
+    const p = this.shorePoint(angle, 0);
+    p.x -= Math.cos(angle) * setback;
+    p.z -= Math.sin(angle) * setback;
+    return p.setY(heightAt(p.x, p.z));
+  }
+
   protected buildBeach(): void {
+    buildSwimBeach(this.matte, this.streetDetail, this.colliders);
     const cols = [0xe8483f, 0x3a78c8, 0xf6c443, 0x22a6a0, 0xf08a2e];
-    const angles = [58, 74, 96, 112, 128];
-    angles.forEach((deg, i) => {
-      const p = this.shorePoint((deg * Math.PI) / 180, 1.35 + (i % 2) * 0.35);
+    const umbrellas = [[58, 11], [74, 19], [96, 11.25], [112, 12.25], [128, 12]];
+    umbrellas.forEach(([degrees, setback], i) => {
+      const p = this.beachPoint(degrees, setback);
       const yaw = this.rnd() * 6;
       const base = M(p.x, p.y, p.z, yaw);
       const b = this.matte.setBase(base);
@@ -378,8 +406,7 @@ export class Town extends Area {
       const cc = new Float32Array(cp.count * 3);
       const c1 = new THREE.Color(cols[i]), c2 = new THREE.Color(0xfaf6ea);
       for (let v = 0; v < cp.count; v++) {
-        const tri = Math.floor(v / 3);
-        const seg = Math.floor(tri / 2) % 8;
+        const seg = Math.floor(v / 3) % 8;
         const c = seg % 2 ? c2 : c1;
         cc[v * 3] = c.r; cc[v * 3 + 1] = c.g; cc[v * 3 + 2] = c.b;
       }
@@ -394,7 +421,7 @@ export class Town extends Area {
       this.colliders.addCyl(p.x, p.z, p.y, p.y + 2.4, 0.08);
     });
     // 砂の城
-    const sp = this.shorePoint((86 * Math.PI) / 180, 1.1);
+    const sp = this.beachPoint(86, 9.75);
     const s = this.matte.setBase(M(sp.x, sp.y, sp.z, 0.4));
     const sand = 0xe2c58c;
     s.add(box(1.5, 0.5, 1.5), sand, M(0, 0.25, 0), { ao: 0.8, jitter: 0.1 });
@@ -406,7 +433,7 @@ export class Town extends Area {
     s.add(cone(0.4, 0.5, 10), 0xd4b478, M(0, 1.55, 0));
     this.starfish[2] = new THREE.Vector3(sp.x + 1.8, sp.y + 0.5, sp.z + 0.6);
     // ヒトデを集めたあとのヒカリ石はビーチの真ん中に現れる
-    const gp = this.shorePoint((90 * Math.PI) / 180, 1.9);
+    const gp = this.beachPoint(90, 22);
     this.gemPos[2] = new THREE.Vector3(gp.x, gp.y + 1.7, gp.z);
   }
 
@@ -546,10 +573,22 @@ export class Town extends Area {
       const x = HARBOR.x - 2, z = HARBOR.z - HARBOR.r - 3.5, y0 = heightAt(x, z) - 0.5;
       const W = 16, D = 8, H = 8;
       const b = this.matte.setBase(M(x, y0, z));
-      b.add(box(W, H, D), 0xc9573f, M(0, H / 2, 0), { ao: 0.7, jitter: 0.08 });
+      // 1階は大きな荷門、2階は桟橋を見渡す検品場。同じ外周と入口の高さを保つ。
+      b.add(box(W, 4.45, D), 0xc9573f, M(0, 2.225, 0), { ao: 0.7, jitter: 0.08 });
+      b.add(box(W, H - 4.45, D), 0xdc8461, M(0, (H + 4.45) / 2, 0), { ao: 0.86 });
+      b.add(box(W + 0.18, 0.20, D + 0.28), 0xf1d5a8, M(0, 4.45, 0));
       b.add(box(W + 0.4, 1.0, D + 0.4), 0x8d8272, M(0, 0.5, 0));
       for (let i = 0; i < 9; i++) b.add(box(0.14, H - 1, 0.1), 0xa8432f, M(-W / 2 + 1 + i * 1.75, H / 2 + 0.4, D / 2 + 0.03));
       b.add(box(W + 0.8, 0.3, D + 0.8), 0x4a4f57, M(0, H + 0.15, 0));
+      for (const side of [-1, 1]) {
+        const front = side * (D / 2 + 0.11);
+        for (const wx of [-5.9, -3.0, 0, 3.0, 5.9]) {
+          b.add(box(2.12, 1.66, 0.15), 0xeaca9c, M(wx, 6.17, front));
+          b.add(box(1.82, 1.36, 0.11), 0x345767, M(wx, 6.17, front + side * 0.10));
+          b.add(box(0.08, 1.36, 0.07), 0xd8c5a6, M(wx, 6.17, front + side * 0.17));
+        }
+        b.add(box(0.12, 1.47, 2.72), 0x345767, M(side * (W / 2 + 0.05), 6.17, 0));
+      }
       // のこぎり屋根
       for (let i = 0; i < 4; i++) {
         b.add(box(W / 4 - 0.1, 0.25, D + 0.6), 0x5a6068, M(-W / 2 + W / 8 + (i * W) / 4, H + 1.0, 0, 0, 1, 1, 1, 0, 0.42));
@@ -563,7 +602,16 @@ export class Town extends Area {
       // 小さな倉庫
       const x2 = x + 15, z2 = z + 0.5, y2 = heightAt(x2, z2) - 0.5;
       const b2 = this.matte.setBase(M(x2, y2, z2));
-      b2.add(box(9, 6, 7), 0xe8d7b0, M(0, 3, 0), { ao: 0.72, jitter: 0.08 });
+      b2.add(box(9, 3.48, 7), 0xd6bd93, M(0, 1.74, 0), { ao: 0.72, jitter: 0.08 });
+      b2.add(box(9, 2.52, 7), 0xf2e1be, M(0, 4.74, 0));
+      b2.add(box(9.16, 0.17, 7.30), 0x7d998b, M(0, 3.48, 0));
+      for (const side of [-1, 1]) {
+        for (const wx of [-2.72, 0, 2.72]) {
+          b2.add(box(1.62, 1.48, 0.12), 0x427470, M(wx, 4.85, side * 3.54));
+          b2.add(box(1.20, 1.15, 0.10), 0x354c51, M(wx, 4.85, side * 3.63));
+        }
+        b2.add(box(0.12, 1.21, 1.74), 0x354c51, M(side * 4.55, 4.85, -0.76));
+      }
       b2.add(box(9.6, 0.3, 7.6), 0x4a4f57, M(0, 6.15, 0));
       b2.add(box(2.8, 3.0, 0.2), 0x3d5a70, M(0, 2.0, 3.54));
       this.colliders.addBox(x2, y2 + 3.15, z2, 9, 6.3, 7);
@@ -602,7 +650,7 @@ export class Town extends Area {
       this.shells.push(new THREE.Vector3(x + Math.cos(a) * 6, y + 0.9, z + Math.sin(a) * 6));
     }
     // 通りと小道に沿って
-    for (const path of [...TOWN_TERRAIN.paths, ...shellStreets]) {
+    for (const path of [...shellPaths, ...shellStreets]) {
       const pts = path.pts;
       for (let i = 1; i < pts.length; i++) {
         const n = Math.max(1, Math.round(Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) / 22));
@@ -643,13 +691,13 @@ export class Town extends Area {
     this.npcs.push({
       x: -27, z: -22.5, yaw: face(-27, -22.5, -22, -17),
       name: 'ミナ', body: 0xd8a24a, belly: 0xfff4d8, hat: 0x22a6a0,
-      lines: ['この通りの先の丘に 灯台があるよ。てっぺんにヒカリ石があるんだって', '空中でジャンプを長押しすると ホバーできるよ', '丘のふもとの 石の門も 気になるなあ…'],
+      lines: ['灯台の丘からは ゆけむり山の火口と そよかぜ台地の気球が見えるよ。てっぺんにはヒカリ石もあるんだって', '空中でジャンプを長押しすると ホバーできるよ', '丘のふもとの 石の門も 気になるなあ…'],
     });
-    const bp = this.shorePoint((100 * Math.PI) / 180, 1.7);
+    const bp = this.beachPoint(100, 13);
     this.npcs.push({
       x: bp.x, z: bp.z, yaw: face(bp.x, bp.z, bp.x, bp.z - 10),
       name: 'ルカ', body: 0x8b5fbf, belly: 0xf3ead6, hat: 0xf6c443,
-      lines: ['ヒトデが 町じゅうに 8つ かくれてるの', '屋根の上や 岩の上も さがしてみてね', 'ぜんぶ見つけたら いいことがあるかも'],
+      lines: ['ヒトデが 町じゅうに 8つ かくれてるの', '屋根の上や 岩の上も さがしてみてね', 'ブイのあるほうへ進むと 足が浮いて泳げるよ。浜へ向けば そのまま上がれるよ'],
     });
     this.npcs.push({
       x: this.pierEnd.x - 8, z: 0.9, yaw: -Math.PI / 2 + 0.5,
@@ -659,12 +707,12 @@ export class Town extends Area {
     this.npcs.push({
       x: WEST.x + 5.5, z: WEST.z + 2, yaw: face(WEST.x + 5.5, WEST.z + 2, WEST.x, WEST.z + 8),
       name: 'カチコ', body: 0xc76a8a, belly: 0xfff4d8, hat: 0x8b5fbf,
-      lines: ['時計塔が スミのかたまりに のまれちゃった！', '水をかけて洗い流すと 壁にふしぎな しるしが出るの', 'しるしに飛びこむと 遠くの「ゆけむり山」へ 行けるんだって'],
+      lines: ['時計塔が スミのかたまりに のまれちゃった！', '水をかけて洗い流すと 壁にふしぎな しるしが出るの', 'ほら、北北西に湯けむりが見えるよ。しるしに飛びこむと あの山に行けるんだって'],
     });
     this.npcs.push({
       x: HARBOR.x - 7, z: HARBOR.z - 4, yaw: face(HARBOR.x - 7, HARBOR.z - 4, HARBOR.x, HARBOR.z + 4),
       name: 'ハトバ', body: 0x3f7f6a, belly: 0xe8e2d0, hat: 0xe8483f,
-      lines: ['ヒカリ石が3つ集まると この倉庫に 異変がおきるそうだ', '倉庫の壁の しるしは「サンゴ入り江」に つながっている', 'ヒカリ石5つで 丘のふもとの 石の門も 目をさますぞ'],
+      lines: ['ヒカリ石が3つ集まると この倉庫に 異変がおきるそうだ', '東北東の岬に 難破船が見えるだろう？ あのサンゴ入り江への入口が 倉庫のしるしなんだ', 'ヒカリ石5つで 丘のふもとの 石の門も 目をさますぞ'],
     });
     this.npcs.push({
       x: -27.1, z: 70.7, yaw: 2.5, name: 'ネリ', body: 0xb88059, belly: 0xffedcc, hat: 0x446f7e,

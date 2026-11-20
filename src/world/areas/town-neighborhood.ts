@@ -112,7 +112,7 @@ function buildHouse(lane: Lane, p: Plot, walls: GeoBatch, detail: GeoBatch, coll
   const y = heightAt(p.x, p.z), base = M(p.x, y, p.z, p.yaw);
   walls.setBase(base);
   detail.setBase(base);
-  const front = p.depth / 2, h = p.height, w = p.width, door = w * 0.24;
+  const front = p.depth / 2, groundH = p.height, h = groundH + 2.45, w = p.width, door = w * 0.24;
   // 足場と当たり判定はどの画質でも同じ。天板や壁に付ける細工は低画質で省略する。
   const solid = (x: number, cy: number, z: number, width: number, height: number, depth: number, color: number) => {
     walls.add(box(width, height, depth), color, M(x, cy, z), { ao: 0.84 });
@@ -120,9 +120,21 @@ function buildHouse(lane: Lane, p: Plot, walls: GeoBatch, detail: GeoBatch, coll
     colliders.addBox(worldX, y + cy, worldZ, width, height, depth, p.yaw);
   };
 
-  solid(0, h / 2 - 0.15, 0, w, h + 0.3, p.depth, p.wall);
+  solid(0, groundH / 2 - 0.15, 0, w, groundH + 0.3, p.depth, p.wall);
   walls.add(box(w + 0.13, 0.50, p.depth + 0.13), 0xb9a383, M(0, 0.15, 0));
-  solid(0, h + 0.12, 0, w + 0.38, 0.24, p.depth + 0.38, p.trim);
+  // 手前の低い屋根を庇兼足場に残し、その奥だけを職人の住居にする。
+  solid(0, groundH + 0.10, 0, w + 0.30, 0.20, p.depth + 0.30, p.trim);
+  const upperFront = front - 0.86, upperW = w - 0.48, upperDepth = p.depth - 1.06;
+  solid(0, groundH + 1.32, -0.33, upperW, 2.25, upperDepth, LIME);
+  solid(0, h + 0.11, -0.33, upperW + 0.30, 0.22, upperDepth + 0.32, p.trim);
+  const windowY = groundH + 1.34;
+  for (const x of [-w * 0.21, w * 0.21]) {
+    windowBay(walls, detail, x, windowY, upperFront, 0, p.trim);
+  }
+  windowBay(walls, detail, 0, windowY, -front + 0.20, Math.PI, p.trim);
+  for (const side of [-1, 1]) {
+    windowBay(walls, detail, side * upperW / 2, windowY, -0.33, side * Math.PI / 2, p.trim);
+  }
   walls.add(box(1.38, 2.40, 0.14), LIME, M(door, 1.23, front + 0.045));
   walls.add(box(1.10, 2.21, 0.12), p.trim, M(door, 1.13, front + 0.13));
   detail.add(box(0.12, 0.12, 0.13), 0xd7b367, M(door + 0.38, 1.02, front + 0.23));

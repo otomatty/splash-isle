@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { angleDelta, clamp, damp } from '../engine/noise';
-import { heightAt, normalAt, worldHalf } from '../world/terrain';
+import { heightAt, normalAt } from '../world/terrain';
 import { resolveBody, type Body, type Box } from '../world/colliders';
 import type { Area } from '../world/area';
 import { P_DUST, P_INK, P_JET, P_MIST, P_SPLASH, P_SPRAY, type Particles } from './particles';
@@ -141,7 +141,9 @@ export class Player {
 
     const th = heightAt(b.x, b.z);
     const deepWater = th < TUNE.swimY - 0.13;
-    this.swimming = deepWater && b.y <= TUNE.swimY + 0.14 && !this.platform;
+    // 離水ジャンプが水面を抜けるまでは、浮力で上向きの速度を打ち消さない。
+    const jumpingOut = this.jumpLaunched && b.vy > 0;
+    this.swimming = deepWater && b.y <= TUNE.swimY + 0.14 && !this.platform && !jumpingOut;
     const onLand = wasGrounded && !this.swimming;
     this.inGoop = onLand && !this.platform && b.y - th < 0.1 && this.level.goop.at(b.x, b.z);
 
@@ -240,11 +242,8 @@ export class Player {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.z += b.vz * dt;
-    // 世界の端より外へは出られない（遠泳のしすぎ防止）
-    const far = Math.hypot(b.x, b.z);
-    const lim = worldHalf() - 20;
-    if (far > lim) { b.x *= lim / far; b.z *= lim / far; }
     const c = resolveBody(this.level.colliders, b, wasGrounded);
+    this.level.confinePlayer(b);
     this.grounded = c.grounded;
     this.platform = c.platform;
 

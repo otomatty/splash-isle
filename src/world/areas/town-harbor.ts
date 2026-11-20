@@ -138,6 +138,87 @@ function dryingNet(b: GeoBatch, fine: GeoBatch): void {
   }
 }
 
+/** せり場の二階は漁協の帳場。裏階段を上がり、海側の開いた戸口から入れる。 */
+function tallyOffice(b: GeoBatch, fine: GeoBatch, colliders: Colliders, x: number, y: number, z: number): void {
+  const floor = 3.16, eave = 6.06, width = 7.68, depth = 4.12;
+  const siding = 0xb7cebe, sash = 0xffecbd, glass = 0x426578;
+  const solid = (cx: number, cy: number, cz: number, w: number, h: number, d: number, color: number) => {
+    b.add(box(w, h, d), color, M(cx, cy, cz), { ao: 0.9 });
+    colliders.addBox(x + cx, y + cy, z + cz, w, h, d);
+  };
+  solid(0, floor - 0.12, 0, width + 0.3, 0.24, depth + 0.3, ENAMEL);
+  const wallH = eave - floor, mid = (eave + floor) / 2;
+  solid(0, mid, depth / 2, width, wallH, 0.16, siding);
+  for (const side of [-1, 1]) solid(side * (width / 2 - 0.08), mid, 0, 0.16, wallH, depth, siding);
+  // 裏壁の間に幅1.4 mの戸口を切り、引き戸を壁沿いに寄せる。
+  const back = -depth / 2, doorX = 2, jambL = doorX - 0.7, jambR = doorX + 0.7;
+  solid((jambL - width / 2) / 2, mid, back, width / 2 + jambL, wallH, 0.16, siding);
+  solid((jambR + width / 2) / 2, mid, back, width / 2 - jambR, wallH, 0.16, siding);
+  solid(doorX, eave - 0.31, back, 1.4, 0.62, 0.16, siding);
+  b.add(box(1.38, 2.2, 0.1), ENAMEL, M(jambL - 0.7, floor + 1.1, back - 0.11));
+  fine.add(box(3, 0.09, 0.12), IRON, M(doorX - 0.7, floor + 2.25, back - 0.15));
+
+  // 通りに面した連窓と、見張りの窓がある妻側。窓枠は低品質でも残す。
+  for (const dx of [-2.47, 0, 2.47]) {
+    b.add(box(1.96, 1.39, 0.1), sash, M(dx, mid + 0.12, depth / 2 + 0.11));
+    b.add(box(1.73, 1.16, 0.07), glass, M(dx, mid + 0.12, depth / 2 + 0.18), { top: 0x719896 });
+    b.add(box(0.075, 1.17, 0.07), sash, M(dx, mid + 0.12, depth / 2 + 0.23));
+    fine.add(box(1.75, 0.065, 0.06), sash, M(dx, mid + 0.38, depth / 2 + 0.23));
+  }
+  for (const side of [-1, 1]) {
+    const wx = side * (width / 2 + 0.03);
+    b.add(box(0.1, 1.2, 1.39), sash, M(wx, mid + 0.13, 0));
+    b.add(box(0.11, 0.98, 1.16), glass, M(wx + side * 0.055, mid + 0.13, 0), { top: 0x719896 });
+    const end = new THREE.Shape();
+    end.moveTo(-depth / 2, 0);
+    end.lineTo(depth / 2, 0);
+    end.lineTo(0, 0.6);
+    end.closePath();
+    const gable = new THREE.ExtrudeGeometry(end, { depth: 0.14, bevelEnabled: false }).rotateY(Math.PI / 2);
+    b.add(gable, ENAMEL, M(side * width / 2 - (side > 0 ? 0.14 : 0), eave - 0.03, 0));
+  }
+  const ridge = 6.65, pitch = 0.28;
+  for (const side of [-1, 1]) {
+    b.add(box(8.45, 0.13, 2.62), 0x437e91, M(0, ridge - 0.35, side * 1.24, 0, 1, 1, 1, side * pitch), { top: 0x5c9aac });
+    fine.add(box(1.25, 0.05, 2.6), CREAM, M(1.95, ridge - 0.26, side * 1.24, 0, 1, 1, 1, side * pitch));
+  }
+  b.add(box(8.5, 0.14, 0.17), IRON, M(0, ridge + 0.03, 0));
+  for (const [dz, top] of [[0, ridge + 0.07], [-1.66, ridge - 0.39], [1.66, ridge - 0.39]]) {
+    colliders.addBox(x, y + top - 0.16, z + dz, 8.45, 0.32, 1.66);
+  }
+
+  // 倉庫裏の勾配に合わせて最下段を決め、歩いて上がれる蹴上げにする。
+  const stairZ = -2.87, tread = 0.56, steps = 11, firstX = -4.65;
+  const foot = heightAt(x + firstX - tread / 2, z + stairZ) - y;
+  const landing = floor - 0.11; // 戸口の敷居を一段上げる
+  const rise = (landing - foot) / steps;
+  for (let i = 0; i < steps - 1; i++) {
+    const cx = firstX + i * tread, top = foot + (i + 1) * rise;
+    solid(cx, top - 0.085, stairZ, tread + 0.01, 0.17, 1.47, PLANK);
+    if (i % 4 === 0) {
+      b.add(box(0.09, 0.86, 0.09), ENAMEL, M(cx, top + 0.4, stairZ - 0.69));
+    }
+  }
+  const lastX = firstX + (steps - 1) * tread;
+  // 外桁を渡し、下側をプレイヤーが通れる木造階段にする。
+  for (const side of [-1, 1]) {
+    const edge = stairZ + side * 0.67;
+    spar(b, [firstX, foot + rise - 0.2, edge], [lastX, landing - 0.2, edge], 0.11, TIMBER);
+  }
+  spar(b, [firstX, foot + rise + 0.81, stairZ - 0.69], [lastX, landing + 0.81, stairZ - 0.69], 0.05, ENAMEL);
+  const landingStart = lastX - tread / 2, landingEnd = 3.16;
+  solid((landingStart + landingEnd) / 2, landing - 0.10, stairZ, landingEnd - landingStart, 0.20, 1.6, PLANK);
+  b.add(box(0.10, 0.85, 0.10), ENAMEL, M(landingEnd, landing + 0.4, stairZ - 0.72));
+  b.add(box(landingEnd - lastX, 0.10, 0.1), ENAMEL, M((landingEnd + lastX) / 2, landing + 0.81, stairZ - 0.72));
+  b.add(box(0.1, 0.85, 0.1), TIMBER, M(landingEnd, landing + 0.4, stairZ + 0.67));
+  b.add(box(0.1, 0.1, 1.4), ENAMEL, M(landingEnd, landing + 0.81, stairZ));
+
+  // 室内の帳付け台と、濡れた手でも読める厚い帳簿。
+  solid(-2.04, floor + 0.4, 0.95, 2.2, 0.8, 0.82, PLANK);
+  fine.add(box(0.75, 0.065, 0.51), IRON, M(-1.8, floor + 0.85, 0.91, -0.12));
+  fine.add(box(0.69, 0.05, 0.46), CREAM, M(-1.8, floor + 0.90, 0.91, -0.12));
+}
+
 /** 長靴で入れる吹きさらしの仕分け場。魚箱・氷・台ばかりは作業台の上。 */
 function fishHouse(b: GeoBatch, fine: GeoBatch, colliders: Colliders): void {
   const { x, z } = FISH_HOUSE;
@@ -155,17 +236,7 @@ function fishHouse(b: GeoBatch, fine: GeoBatch, colliders: Colliders): void {
     b.add(box(0.17, 0.24, 4.3), TIMBER, M(dx, 2.93, 0));
     for (const side of [-1, 1]) spar(fine, [dx, 2.38, side * 1.85], [dx, 2.89, side * 1.05], 0.06, TIMBER);
   }
-  // 二枚の傾いた屋根と棟の板。一部を生成りの帆布で継いでいる。
-  for (const side of [-1, 1]) {
-    const pitch = side * 0.215;
-    b.add(box(8.35, 0.12, 2.55), 0x437e91, M(0, 3.27, side * 1.23, 0, 1, 1, 1, pitch), { top: 0x5c9aac });
-    fine.add(box(1.25, 0.05, 2.51), CREAM, M(1.95, 3.35, side * 1.23, 0, 1, 1, 1, pitch));
-  }
-  b.add(box(8.46, 0.13, 0.17), IRON, M(0, 3.58, 0));
-  // 薄い水平の天板を三分割して、屋根に着地したときの段差を小さくする。
-  for (const [dz, top] of [[0, 3.58], [-1.68, 3.23], [1.68, 3.23]]) {
-    colliders.addBox(x, y + top - 0.14, z + dz, 8.35, 0.28, 1.68);
-  }
+  tallyOffice(b, fine, colliders, x, y, z);
 
   dryingNet(b, fine);
   b.add(box(5.3, 0.14, 1.46), PLANK, M(-0.36, 0.92, 0.21));

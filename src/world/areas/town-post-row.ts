@@ -22,9 +22,9 @@ interface House {
 // 正面は通り（+Z）へ向く。隣同士は界壁を揃え、店先と裏庭の奥行きだけを変える。
 const houses: House[] = [
   { left: -30, width: 6.4, front: -54.3, depth: 5.7, eaves: 5.2, wall: 0xe8af85, paint: 0x426c62, tile: 0xaf6150, use: 'bindery' },
-  { left: -23.6, width: 7.2, front: -53.7, depth: 6.4, eaves: 6.5, wall: 0xf0d99e, paint: 0x536b78, tile: 0x95725d, use: 'stationery' },
+  { left: -23.6, width: 7.2, front: -53.7, depth: 6.4, eaves: 8.1, wall: 0xf0d99e, paint: 0x536b78, tile: 0x95725d, use: 'stationery' },
   { left: -16.4, width: 6.2, front: -54.2, depth: 4.8, eaves: 5.5, wall: 0xe5b5a5, paint: 0x596f85, tile: 0xb97755, use: 'lodging' },
-  { left: 10.8, width: 8.3, front: -52.6, depth: 6.4, eaves: 4.2, wall: 0xd6c698, paint: 0x3e7c76, tile: 0x807565, use: 'dispatch' },
+  { left: 10.8, width: 8.3, front: -52.6, depth: 6.4, eaves: 5.7, wall: 0xd6c698, paint: 0x3e7c76, tile: 0x807565, use: 'dispatch' },
   { left: 19.1, width: 7.1, front: -52.2, depth: 5.2, eaves: 6.1, wall: 0xeac9ad, paint: 0xad634c, tile: 0x9f6146, use: 'home' },
 ];
 
@@ -70,7 +70,12 @@ function buildHouse(p: House, matte: GeoBatch, detail: GeoBatch, colliders: Coll
     detail.add(box(0.045, 0.015, len - 0.12), 0xbca385, M(x, 0.045, len / 2));
   }
 
-  block(0, h / 2 - 0.1, -d / 2, w, h + 0.2, d, p.wall, true);
+  const firstCeiling = p.use === 'dispatch' ? 3.2 : 2.85;
+  block(0, firstCeiling / 2 - 0.1, -d / 2, w, firstCeiling + 0.2, d, p.wall, true);
+  const higher = new THREE.Color(p.wall).lerp(new THREE.Color(LIME), 0.22).getHex();
+  block(0, (firstCeiling + h) / 2, -d / 2, w, h - firstCeiling, d, higher, true);
+  block(0, firstCeiling, -d / 2, w, 0.15, d + 0.31, LIME);
+  if (p.use === 'stationery') block(0, 5.51, -d / 2, w, 0.13, d + 0.22, p.tile);
   block(0, 0.24, 0.015, w, 0.42, 0.10, 0xb59779);
   block(0, h - 0.18, -d / 2, w + 0.05, 0.16, d + 0.20, LIME);
   const gable = p.use === 'bindery' || p.use === 'home';
@@ -110,6 +115,10 @@ function buildHouse(p: House, matte: GeoBatch, detail: GeoBatch, colliders: Coll
   for (const x of [-w * 0.26, w * 0.26]) {
     windowBay(x, h - 1.08, 0.03, 0, 1.0, 1.24);
     windowBay(x, h - 1.16, -d - 0.03, Math.PI, 0.9, 1.04);
+    if (p.use === 'stationery') {
+      windowBay(x, 4.22, 0.03, 0, 1.10, 1.36);
+      windowBay(x, 4.22, -d - 0.03, Math.PI, 0.90, 1.16);
+    }
   }
   if (p.use !== 'stationery') {
     const side = p.use === 'bindery' || p.use === 'dispatch' ? -1 : 1;

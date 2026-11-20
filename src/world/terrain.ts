@@ -51,7 +51,6 @@ export interface TerrainDef {
   palette: Palette;
 }
 
-let def: TerrainDef | null = null;
 let WORLD = 384;
 let HALF = WORLD / 2;
 let CELL = WORLD / GRID;
@@ -82,34 +81,78 @@ export function normalAt(x: number, z: number, out: THREE.Vector3): THREE.Vector
   return out.set(-dx, 2 * e, -dz).normalize();
 }
 
-function polyDistance(list: PathDef[], x: number, z: number): number {
-  let best = Infinity;
-  for (const path of list) {
-    const pts = path.pts;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const ax = pts[i][0], az = pts[i][1], bx = pts[i + 1][0], bz = pts[i + 1][1];
-      const abx = bx - ax, abz = bz - az;
-      let t = ((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz);
-      t = t < 0 ? 0 : t > 1 ? 1 : t;
-      const d = Math.hypot(x - (ax + abx * t), z - (az + abz * t)) - path.width / 2;
-      if (d < best) best = d;
+interface RoadSegment {
+  x: number; z: number;
+  dx: number; dz: number;
+  lengthSquared: number;
+  radius: number;
+}
+
+interface RoadIndex {
+  all: RoadSegment[];
+  cells: RoadSegment[][];
+}
+
+const ROAD_CELLS = 24;
+let paved: RoadIndex = { all: [], cells: [] };
+let trails: RoadIndex = { all: [], cells: [] };
+
+function segmentDistance(s: RoadSegment, x: number, z: number): number {
+  const t = s.lengthSquared ? Math.max(0, Math.min(1, ((x - s.x) * s.dx + (z - s.z) * s.dz) / s.lengthSquared)) : 0;
+  return Math.hypot(x - (s.x + t * s.dx), z - (s.z + t * s.dz)) - s.radius;
+}
+
+function indexRoads(paths: PathDef[], plazas: TerrainDef['plazas'], world: number): RoadIndex {
+  const all: RoadSegment[] = [];
+  for (const path of paths) {
+    for (let i = 1; i < path.pts.length; i++) {
+      const [x, z] = path.pts[i - 1], [bx, bz] = path.pts[i];
+      const dx = bx - x, dz = bz - z, lengthSquared = dx * dx + dz * dz;
+      if (lengthSquared) all.push({ x, z, dx, dz, lengthSquared, radius: path.width / 2 });
     }
   }
+  for (const p of plazas) all.push({ x: p.x, z: p.z, dx: 0, dz: 0, lengthSquared: 0, radius: p.r });
+
+  const cells: RoadSegment[][] = [];
+  if (all.length > ROAD_CELLS) {
+    const side = world / ROAD_CELLS;
+    const distances = new Float64Array(all.length);
+    for (let j = 0; j < ROAD_CELLS; j++) {
+      for (let i = 0; i < ROAD_CELLS; i++) {
+        const x = (i + 0.5) * side - world / 2, z = (j + 0.5) * side - world / 2;
+        let nearest = Infinity;
+        for (let k = 0; k < all.length; k++) {
+          distances[k] = segmentDistance(all[k], x, z);
+          nearest = Math.min(nearest, distances[k]);
+        }
+        // 中心から区画内の点に移動すると各距離は半対角線まで変わる。中心で最短距離と
+        // 対角線以上の差がある道は、区画の端でも最寄りにならない（道幅の違いも含む）。
+        const limit = nearest + Math.SQRT2 * side;
+        cells.push(all.filter((_, k) => distances[k] <= limit));
+      }
+    }
+  }
+  return { all, cells };
+}
+
+function nearestRoad(index: RoadIndex, x: number, z: number, best = Infinity): number {
+  let segments = index.all;
+  if (index.cells.length) {
+    const i = Math.floor((x + HALF) * ROAD_CELLS / WORLD), j = Math.floor((z + HALF) * ROAD_CELLS / WORLD);
+    if (i >= 0 && i < ROAD_CELLS && j >= 0 && j < ROAD_CELLS) segments = index.cells[j * ROAD_CELLS + i];
+  }
+  for (const s of segments) best = Math.min(best, segmentDistance(s, x, z));
   return best;
 }
 
 /** 石畳（通り・広場）の縁までの距離。負なら石畳の上 */
 export function pavedDistance(x: number, z: number): number {
-  if (!def) return Infinity;
-  let best = polyDistance(def.streets, x, z);
-  for (const p of def.plazas) best = Math.min(best, Math.hypot(x - p.x, z - p.z) - p.r);
-  return best;
+  return nearestRoad(paved, x, z);
 }
 
 /** 小道・通り・広場のうち一番近いものの縁までの距離。負なら道の上 */
 export function pathDistance(x: number, z: number): number {
-  if (!def) return Infinity;
-  return Math.min(polyDistance(def.paths, x, z), pavedDistance(x, z));
+  return nearestRoad(trails, x, z, pavedDistance(x, z));
 }
 
 export interface TerrainUniforms {
@@ -368,7 +411,8 @@ export function createTerrain(noiseTex: THREE.Texture): Terrain {
 
   const n = new THREE.Vector3();
   const apply = (d: TerrainDef): void => {
-    def = d;
+    paved = indexRoads(d.streets, d.plazas, d.world);
+    trails = indexRoads(d.paths, [], d.world);
     WORLD = d.world;
     HALF = WORLD / 2;
     CELL = WORLD / GRID;

@@ -27,8 +27,18 @@ export function buildPostOffice(matte: GeoBatch, detail: GeoBatch, colliders: Co
   block(0, 2.63, -0.65, 12.2, 4.9, 5.7, cream);
   block(0, 4.37, 4.03, 12.8, 0.35, 3.67, jade);
   block(0, 5.18, -0.65, 12.65, 0.2, 6.15, jade);
-  block(0, 6.23, -0.65, 5.9, 1.9, 3.5, 0xe5ae69);
-  block(0, 7.28, -0.65, 6.4, 0.2, 4.0, jade);
+  // 2階の事務室は回廊の屋根から一段引く。正面・裏面とも窓を通して階が読める。
+  block(0, 6.57, -0.65, 9.5, 2.58, 3.5, 0xe5ae69);
+  block(0, 7.97, -0.65, 9.95, 0.22, 3.99, jade);
+  for (const side of [-1, 1]) {
+    const wallZ = -0.65 + side * 1.79;
+    for (const wx of [-3.35, -1.88, 1.88, 3.35]) {
+      b.add(box(1.0, 1.34, 0.13), cream, M(wx, 6.6, wallZ));
+      b.add(box(0.79, 1.10, 0.11), dark, M(wx, 6.6, wallZ + side * 0.09));
+      trim.add(box(0.80, 0.07, 0.07), jade, M(wx, 6.75, wallZ + side * 0.15));
+    }
+    b.add(box(0.11, 1.20, 1.25), dark, M(side * 4.79, 6.6, -0.66));
+  }
 
   const span = 3.76, radius = 1.52, spring = 2.45, lip = 5.45;
   for (const column of [-1.5, -0.5, 0.5, 1.5]) {
@@ -61,13 +71,10 @@ export function buildPostOffice(matte: GeoBatch, detail: GeoBatch, colliders: Co
   }
 
   // 正面の立ち上がりに封筒の看板。庇の上からも街区を見分けられる。
-  b.add(box(2.45, 1.23, 0.16), red, M(0, 6.3, 1.16));
-  b.add(box(1.72, 0.83, 0.09), cream, M(0, 6.3, 1.27));
+  b.add(box(2.45, 1.23, 0.16), red, M(0, 6.65, 1.16));
+  b.add(box(1.72, 0.83, 0.09), cream, M(0, 6.65, 1.27));
   for (const side of [-1, 1]) {
-    b.add(box(0.95, 0.085, 0.06), red, M(side * 0.4, 6.44, 1.34, 0, 1, 1, 1, 0, side * 0.52));
-    for (const dx of [1.7, 2.1, 2.5]) {
-      trim.add(box(0.19, 0.88, 0.1), dark, M(side * dx, 6.24, 1.14));
-    }
+    b.add(box(0.95, 0.085, 0.06), red, M(side * 0.4, 6.79, 1.34, 0, 1, 1, 1, 0, side * 0.52));
   }
   for (const wx of [-4.6, -1.65, 1.65, 4.6]) {
     trim.add(box(1.18, 1.65, 0.12), jade, M(wx, 2.64, -3.53));
