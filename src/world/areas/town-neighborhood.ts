@@ -126,7 +126,7 @@ function buildHouse(lane: Lane, p: Plot, walls: GeoBatch, detail: GeoBatch, coll
   walls.add(box(1.38, 2.40, 0.14), LIME, M(door, 1.23, front + 0.045));
   walls.add(box(1.10, 2.21, 0.12), p.trim, M(door, 1.13, front + 0.13));
   detail.add(box(0.12, 0.12, 0.13), 0xd7b367, M(door + 0.38, 1.02, front + 0.23));
-  solid(door, 0.08, front + 0.74, 1.80, 0.16, 1.48, 0xc8b493);
+  walls.add(box(1.80, 0.05, 1.48), 0xc8b493, M(door, 0.01, front + 0.74));
   const approach = Math.max(0, doorstepToWalk(lane, p) - front - 1.48);
   const stones = Math.ceil(approach / 0.75);
   for (let i = 0; i < stones; i++) {
