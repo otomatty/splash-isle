@@ -1,8 +1,10 @@
 // 開発用の自動テスト: ヘッドレス Chrome 上でゲームを早送りし、
 // 「町 → 入口を洗って開ける → ステージ選択 → クリアで町へ戻る」を全14個ぶん通して確かめる
 import puppeteer from 'puppeteer-core';
+import { startGuestGame, useOfflineGuest } from './play-guest.mjs';
 
-const url = process.argv[2] ?? 'http://localhost:4173/?debug';
+const url = new URL(process.argv[2] ?? 'http://localhost:4173/');
+url.searchParams.set('debug', '');
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
@@ -14,17 +16,15 @@ await page.setViewport({ width: 960, height: 540 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !/502|Failed to load resource/.test(m.text())) errors.push(m.text()); });
-await page.goto(url, { waitUntil: 'load' });
-await page.waitForFunction(() => document.getElementById('loading')?.classList.contains('hidden'), { timeout: 120000 });
+await useOfflineGuest(page);
+await page.goto(url.href, { waitUntil: 'load' });
+await startGuestGame(page);
 
 const result = await page.evaluate(async () => {
   const g = window.__splash;
   const out = { checks: [] };
   const check = (name, ok, extra) => out.checks.push([ok ? 'ok  ' : 'FAIL', name, extra ?? '']);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  localStorage.clear();
-  document.getElementById('btnPlay').click();
-  await sleep(1200);
   // 以降は描画を止め、時間を手動で進める
   window.requestAnimationFrame = () => 0;
   g.gfx.render = () => {};
@@ -58,6 +58,15 @@ const result = await page.evaluate(async () => {
   check('水をかけ続けると入口がひらく', p0.state === 'open' && (g.save.portals & 1) === 1, `${out.washSec}秒`);
   waitPlay();
 
+  // 手動で進めるゲームの時計と切り離し、暗転・地区の取得・組み立ての完了まで待つ。
+  const waitForArea = async () => {
+    const deadline = performance.now() + 30000;
+    while (g.switching) {
+      if (performance.now() > deadline) throw new Error('エリアの読み込みが完了しませんでした');
+      await sleep(25);
+    }
+  };
+
   // ── 入口に飛びこむ → ステージ選択 ──
   const enter = async (idx, episode) => {
     const p = portals.list[idx];
@@ -68,11 +77,11 @@ const result = await page.evaluate(async () => {
     const btns = [...document.querySelectorAll('#epList button')];
     if (btns[episode].disabled) return 'locked';
     btns[episode].click();
-    await sleep(900);
+    await waitForArea();
     run(0.3);
     return g.stage && g.stage.episode === episode;
   };
-  const backToTown = async () => { await sleep(900); run(0.3); };
+  const backToTown = async () => { await waitForArea(); run(0.3); };
   // ステージの目標を達成してヒカリ石を取る
   const clear = async () => {
     const a = g.cur.area, m = a.missions[0];

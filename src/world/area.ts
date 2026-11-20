@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { GeoBatch, M, addSway, box, buildBushGeometry, buildGrassTuftGeometry, buildPalmGeometry, buildRockGeometry, cone, cyl, sph } from './props';
-import { Colliders, type Box } from './colliders';
+import { GRASS_DISTANCE, GeoBatch, M, addSway, box, buildBushGeometry, buildGrassTuftGeometry, buildPalmGeometry, buildRockGeometry, cone, cyl, sph } from './props';
+import { Colliders, slideAlongBoundary, type Body, type Box } from './colliders';
 import { heightAt, normalAt, pathDistance, type TerrainDef } from './terrain';
 import { Goop } from './goop';
 import { mulberry32 } from '../engine/noise';
@@ -74,10 +74,22 @@ export const FLAG_COLORS = [0xe8483f, 0xf6c443, 0x22a6a0, 0xfaf6ea, 0xf08a2e, 0x
 
 export const mul = (a: THREE.Matrix4, b: THREE.Matrix4) => a.clone().multiply(b);
 
+// BoxGeometry の6面。建物の中や、隣の部材に完全に覆われる面だけを省く。
+const boxFaces = ['right', 'left', 'top', 'bottom', 'front', 'back'] as const;
+function houseBox(w: number, h: number, d: number, ...hidden: (typeof boxFaces)[number][]): THREE.BoxGeometry {
+  const geo = box(w, h, d);
+  const indices = geo.index!.array.filter((_, i) => !hidden.includes(boxFaces[Math.floor(i / 6)]));
+  geo.clearGroups();
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geo;
+}
+
 // エリアをまたいで使い回す重いジオメトリ（破棄しない）
 const shared = <T extends THREE.BufferGeometry>(g: T): T => { g.userData.shared = true; return g; };
 let palmGeo: THREE.BufferGeometry | null = null;
 let bushGeo: THREE.BufferGeometry | null = null;
+let farPalmGeo: THREE.BufferGeometry | null = null;
+let farBushGeo: THREE.BufferGeometry | null = null;
 let tuftGeo: THREE.BufferGeometry | null = null;
 const rockGeos = new Map<number, THREE.BufferGeometry>();
 const rockGeo = (seed: number) => {
@@ -149,10 +161,17 @@ export abstract class Area {
   /** このエリアの地形（エリアを作る前に Terrain.apply で焼き込んでおく） */
   abstract readonly terrain: TerrainDef;
 
+  /** 海中・陸上・空中に共通する移動範囲。エリアの切り替えは入口から行う。 */
+  confinePlayer(b: Body, radius = this.terrain.world / 2 - 20): void {
+    const distance = Math.hypot(b.x, b.z);
+    if (distance + b.radius > radius) slideAlongBoundary(b, b.x / distance, b.z / distance, radius);
+  }
+
   /** 使い終わったエリアの GPU リソースを解放する */
   dispose(): void {
     this.root.traverse((o) => {
       const m = o as THREE.Mesh;
+      if (m instanceof THREE.InstancedMesh) m.dispose();
       if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
       const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
       for (const mat of mats) {
@@ -304,16 +323,26 @@ export abstract class Area {
     const toWorld = (lx: number, lz: number): [number, number] => [x + lx * cos + lz * sin, z - lx * sin + lz * cos];
     const trim = 0xfbf7ee;
 
-    b.add(box(w, H, d), wall, M(0, H / 2, 0), { ao: 0.72, jitter: 0.05 });
+    const floors = h >= 8 ? 3 : 2;
+    // 広場の屋根・外階段は足場。外形の高さを保ち、短い家は上階の天井高を詰める。
+    const firstCeiling = Math.max(2.55, h / floors);
+    const upperHeight = (h - firstCeiling) / (floors - 1);
+    b.add(houseBox(w, firstCeiling + g, d, 'top', 'bottom'), wall, M(0, (firstCeiling + g) / 2, 0), { ao: 0.72 });
+    const upperWall = new THREE.Color(wall).lerp(new THREE.Color(trim), 0.24);
+    for (let storey = 1; storey < floors; storey++) {
+      const sill = g + firstCeiling + (storey - 1) * upperHeight;
+      b.add(houseBox(w + 0.06, upperHeight, d + 0.06, 'bottom'), upperWall, M(0, sill + upperHeight / 2, 0), { ao: 0.89 });
+      b.add(box(w + 0.24, 0.14, d + 0.24), trim, M(0, sill, 0));
+    }
     b.add(box(w + 0.22, 0.95, d + 0.22), 0xa39078, M(0, 0.475, 0), { ao: 0.75 });
     b.add(box(w + 0.26, 0.14, d + 0.26), accent, M(0, H - 0.32, 0));
     // 屋上の立ち上がり
     const ph = 0.35, pt = 0.3;
     b.add(box(w + 0.12, ph, pt), trim, M(0, H + ph / 2, d / 2 - pt / 2 + 0.06));
     b.add(box(w + 0.12, ph, pt), trim, M(0, H + ph / 2, -d / 2 + pt / 2 - 0.06));
-    b.add(box(pt, ph, d - pt), trim, M(w / 2 - pt / 2 + 0.06, H + ph / 2, 0));
-    b.add(box(pt, ph, d - pt), trim, M(-w / 2 + pt / 2 - 0.06, H + ph / 2, 0));
-    b.add(box(w - 0.5, 0.04, d - 0.5), 0xd9c7a8, M(0, H + 0.02, 0)); // 屋上の床
+    b.add(houseBox(pt, ph, d - pt, 'front', 'back'), trim, M(w / 2 - pt / 2 + 0.06, H + ph / 2, 0));
+    b.add(houseBox(pt, ph, d - pt, 'front', 'back'), trim, M(-w / 2 + pt / 2 - 0.06, H + ph / 2, 0));
+    b.add(houseBox(w - 0.5, 0.04, d - 0.5, 'bottom'), 0xd9c7a8, M(0, H + 0.02, 0)); // 屋上の床
 
     this.colliders.addBox(x, y0 + H / 2, z, w, H, d, yaw);
     const topY = y0 + H;
@@ -323,9 +352,9 @@ export abstract class Area {
     }
 
     // 玄関
-    b.add(box(1.6, 2.5, 0.2), trim, M(0, g + 1.25, d / 2 + 0.02));
-    b.add(box(1.2, 2.2, 0.24), accent, M(0, g + 1.1, d / 2 + 0.04), { ao: 0.8 });
-    b.add(box(1.0, 0.06, 0.26), 0xffffff, M(0, g + 1.5, d / 2 + 0.045));
+    b.add(houseBox(1.6, 2.5, 0.2, 'back'), trim, M(0, g + 1.25, d / 2 + 0.02));
+    b.add(houseBox(1.2, 2.2, 0.24, 'back'), accent, M(0, g + 1.1, d / 2 + 0.04), { ao: 0.8 });
+    b.add(houseBox(1.0, 0.06, 0.26, 'back'), 0xffffff, M(0, g + 1.5, d / 2 + 0.045));
     gl.add(sph(0.07, 8, 6), 0xe8b93c, M(0.42, g + 1.05, d / 2 + 0.2));
     b.add(box(2.0, 0.22, 0.8), STONE, M(0, g + 0.02, d / 2 + 0.4));
     if (awning) {
@@ -345,35 +374,42 @@ export abstract class Area {
       return M(-w / 2, y, u, -Math.PI / 2);
     };
     const flowerCols = [0xe8483f, 0xf6c443, 0xf08ab0, 0xffffff, 0xb05ad8];
-    const win = (f: 'f' | 'b' | 'l' | 'r', u: number, y: number, flowers: boolean) => {
+    const win = (f: 'f' | 'b' | 'l' | 'r', u: number, y: number) => {
       const m = face(f, u, y);
-      b.add(box(1.02, 1.36, 0.14), trim, mul(m, M(0, 0, 0.02)));
-      gl.add(box(0.8, 1.14, 0.16), 0x1c3b55, mul(m, M(0, 0, 0.03)));
-      b.add(box(0.05, 1.14, 0.18), trim, mul(m, M(0, 0, 0.03)));
-      b.add(box(0.8, 0.05, 0.18), trim, mul(m, M(0, 0.1, 0.03)));
+      b.add(houseBox(1.02, 1.36, 0.14, 'back'), trim, mul(m, M(0, 0, 0.02)));
+      gl.add(houseBox(0.8, 1.14, 0.16, 'back'), 0x1c3b55, mul(m, M(0, 0, 0.03)));
+      b.add(houseBox(0.05, 1.14, 0.18, 'back'), trim, mul(m, M(0, 0, 0.03)));
+      b.add(houseBox(0.8, 0.05, 0.18, 'back'), trim, mul(m, M(0, 0.1, 0.03)));
       b.add(box(0.4, 1.24, 0.07), accent, mul(m, M(-0.74, 0, 0.07)), { ao: 0.85 });
       b.add(box(0.4, 1.24, 0.07), accent, mul(m, M(0.74, 0, 0.07)), { ao: 0.85 });
-      b.add(box(1.3, 0.09, 0.3), STONE, mul(m, M(0, -0.74, 0.12)));
-      if (flowers) {
-        b.add(box(1.05, 0.24, 0.3), TERRACOTTA, mul(m, M(0, -0.58, 0.3)));
-        for (let i = 0; i < 5; i++) {
-          b.add(sph(0.13, 6, 5), 0x2f7a22, mul(m, M(-0.4 + i * 0.2, -0.42, 0.3)));
-          b.add(sph(0.075, 6, 4), flowerCols[(i + idx) % flowerCols.length], mul(m, M(-0.4 + i * 0.2 + 0.03, -0.31, 0.34)));
-        }
-      }
+      b.add(houseBox(1.3, 0.09, 0.3, 'back'), STONE, mul(m, M(0, -0.74, 0.12)));
     };
-    const floors = h >= 6 ? (h >= 8 ? 3 : 2) : 1;
-    for (let f = 0; f < floors; f++) {
-      const y = g + 1.75 + f * 2.7;
-      if (f > 0 || w >= 7) {
-        win('f', -w / 2 + 1.5, y, f > 0);
-        win('f', w / 2 - 1.5, y, f > 0);
+    const groundWindowY = g + 1.75;
+    if (w >= 7) {
+      win('f', -w / 2 + 1.5, groundWindowY);
+      win('f', w / 2 - 1.5, groundWindowY);
+    }
+    win('l', 0, groundWindowY);
+    win('r', stairs ? -d / 2 + 1.4 : 0, groundWindowY + (stairs ? 0.4 : 0));
+    win('b', w >= 8 ? -1.8 : 0, groundWindowY);
+    if (w >= 8) win('b', 1.8, groundWindowY);
+
+    // 上階の窓は鎧戸・ガラス・桟にまとめ、遠くからも階が読み取れるようにする。
+    const tall = Math.min(1.25, upperHeight * 0.6);
+    for (let storey = 1; storey < floors; storey++) {
+      const y = g + firstCeiling + (storey - 0.5) * upperHeight;
+      const upstairs = (side: 'f' | 'b' | 'l' | 'r', u: number) => {
+        const frame = face(side, u, y);
+        b.add(houseBox(1.44, tall + 0.10, 0.08, 'back'), accent, mul(frame, M(0, 0, 0.055)));
+        gl.add(houseBox(0.84, tall, 0.08, 'back'), 0x274c60, mul(frame, M(0, 0, 0.11)));
+        b.add(box(0.85, 0.065, 0.055), trim, mul(frame, M(0, 0.17, 0.16)));
+      };
+      for (const side of ['f', 'b'] as const) {
+        upstairs(side, -w * 0.25);
+        upstairs(side, w * 0.25);
       }
-      if (f > 0 && w >= 8) win('f', 0, y, true);
-      win('l', 0, y, false);
-      win('r', stairs ? -d / 2 + 1.4 : 0, y + (stairs ? 0.4 : 0), false);
-      win('b', w >= 8 ? -1.8 : 0, y, false);
-      if (w >= 8) win('b', 1.8, y, false);
+      upstairs('l', 0);
+      upstairs('r', stairs ? -d / 2 + 1.4 : 0);
     }
 
     if (dome) {
@@ -488,8 +524,15 @@ export abstract class Area {
       p.y -= sag * 4 * t * (1 - t);
       pts.push(p);
     }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    this.matte.setBase(new THREE.Matrix4()).add(new THREE.TubeGeometry(curve, n * 2, 0.018, 4), 0x5a4a3a);
+    // 旗の位置はそのままに、同じ放物線の紐だけを簡略化する。区間の弦と曲線の最大の高低差は sag × Δt²。
+    const radius = 0.018;
+    const control = new THREE.Vector3().lerpVectors(a, c, 0.5);
+    control.y -= 2 * sag;
+    const curve = new THREE.QuadraticBezierCurve3(a, control, c);
+    // TubeGeometry は弧長で等分する。水平長で割ると、1区間の Δt を上から見積もれる。
+    const span = Math.hypot(c.x - a.x, c.z - a.z);
+    const segments = span > 0 ? Math.max(2, Math.ceil(curve.getLength() / span * Math.sqrt(sag / radius))) : 2;
+    this.matte.setBase(new THREE.Matrix4()).add(new THREE.TubeGeometry(curve, segments, radius, 4), 0x5a4a3a);
     const pos: number[] = [], col: number[] = [];
     const cc = new THREE.Color();
     const off = Math.abs(Math.floor(a.x * 3 + c.z * 5));
@@ -547,12 +590,24 @@ export abstract class Area {
 
   /** 低品質設定で影を落とさなくするもの（ヤシ・低木） */
   readonly softShadow: THREE.Object3D[] = [];
+  private readonly trees: { mesh: THREE.InstancedMesh; near: THREE.BufferGeometry; far: THREE.BufferGeometry }[] = [];
+  private readonly grass: THREE.InstancedMesh[] = [];
+
+  updateVegetation(camera: THREE.Vector3, showGrass: boolean): void {
+    for (const { mesh, near, far } of this.trees) {
+      const distance = mesh.boundingBox!.distanceToPoint(camera);
+      mesh.geometry = distance < (mesh.geometry === near ? 48 : 40) ? near : far;
+    }
+    for (const mesh of this.grass) {
+      mesh.visible = showGrass && mesh.boundingBox!.distanceToPoint(camera) <= GRASS_DISTANCE + 1;
+    }
+  }
 
   /**
    * 同じ形をたくさん並べる。地面を区画に分けて区画ごとのインスタンスメッシュにするので、
    * 画面や影の範囲に入らない区画はまとめて描画を省ける。
    */
-  protected addInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, mats: THREE.Matrix4[], opts: { shadow: boolean; soft?: boolean; detail?: boolean; colors?: THREE.Color[]; cell?: number }): void {
+  protected addInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, mats: THREE.Matrix4[], opts: { shadow: boolean; soft?: boolean; detail?: boolean; far?: THREE.BufferGeometry; colors?: THREE.Color[]; cell?: number }): void {
     const cell = opts.cell ?? 56;
     const groups = new Map<string, number[]>();
     mats.forEach((m, i) => {
@@ -572,7 +627,12 @@ export abstract class Area {
       mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
       this.root.add(mesh);
-      if (opts.detail) this.detailMeshes.push(mesh);
+      if (opts.far || opts.detail) mesh.computeBoundingBox();
+      if (opts.far) this.trees.push({ mesh, near: geo, far: opts.far });
+      if (opts.detail) {
+        this.detailMeshes.push(mesh);
+        this.grass.push(mesh);
+      }
       if (opts.soft) this.softShadow.push(mesh);
     }
   }
@@ -588,6 +648,7 @@ export abstract class Area {
       const palmMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, side: THREE.DoubleSide });
       addSway(palmMat, this.swayTime, 0.0052, 1);
       palmGeo ??= shared(buildPalmGeometry());
+      farPalmGeo ??= shared(buildPalmGeometry(true));
       const palms: THREE.Matrix4[] = [];
       let guard = 0;
       while (palms.length < o.palms && guard++ < 12000) {
@@ -611,7 +672,7 @@ export abstract class Area {
         palms.push(dummy.matrix.clone());
         this.colliders.addCyl(x, z, h - 1, h + 5.2 * s, 0.3 * s);
       }
-      this.addInstanced(palmGeo, palmMat, palms, { shadow: true, soft: true });
+      this.addInstanced(palmGeo, palmMat, palms, { shadow: true, soft: true, far: farPalmGeo });
     }
 
     // 低木
@@ -619,6 +680,7 @@ export abstract class Area {
       const bushMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
       addSway(bushMat, this.swayTime, 0.03, 1);
       bushGeo ??= shared(buildBushGeometry());
+      farBushGeo ??= shared(buildBushGeometry(true));
       const bushes: THREE.Matrix4[] = [];
       let guard = 0;
       while (bushes.length < o.bushes && guard++ < 14000) {
@@ -634,16 +696,16 @@ export abstract class Area {
         dummy.updateMatrix();
         bushes.push(dummy.matrix.clone());
       }
-      this.addInstanced(bushGeo, bushMat, bushes, { shadow: true, soft: true });
+      this.addInstanced(bushGeo, bushMat, bushes, { shadow: true, soft: true, far: farBushGeo });
     }
 
     // 草むらと花
     if (o.grass > 0) {
       const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
-      addSway(grassMat, this.swayTime, 0.5, 1);
+      addSway(grassMat, this.swayTime, 0.5, 1, true);
       tuftGeo ??= shared(buildGrassTuftGeometry());
       const flowerMat = new THREE.MeshStandardMaterial({ roughness: 0.7 });
-      addSway(flowerMat, this.swayTime, 0.5, 1);
+      addSway(flowerMat, this.swayTime, 0.5, 1, true);
       const flowerGeo = new THREE.IcosahedronGeometry(0.06, 0);
       flowerGeo.scale(1, 0.7, 1);
       flowerGeo.translate(0, 0.24, 0);
@@ -676,7 +738,7 @@ export abstract class Area {
 
     // 岩（海岸線と丘の斜面）
     const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, flatShading: true });
-    const addRocks = (seed: number, mats: THREE.Matrix4[]) => this.addInstanced(rockGeo(seed), rockMat, mats, { shadow: true });
+    const addRocks = (seed: number, mats: THREE.Matrix4[]) => this.addInstanced(rockGeo(seed), rockMat, mats, { shadow: true, cell: 112 });
     const place = (x: number, z: number, s: number, mats: THREE.Matrix4[]) => {
       const h = heightAt(x, z);
       dummy.position.set(x, h + 0.1 * s, z);

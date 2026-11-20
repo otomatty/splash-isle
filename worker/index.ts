@@ -4,12 +4,12 @@
  *   GET  /api/auth/login      Google のログイン画面へ
  *   GET  /api/auth/callback   Google からの戻り先
  *   POST /api/auth/logout     ログアウト
- *   GET  /api/save            クラウドセーブの読み込み
- *   PUT  /api/save            クラウドセーブの保存
+ *   GET  /api/save[/B|/C]     クラウドセーブの読み込み（省略時は A）
+ *   PUT  /api/save[/B|/C]     クラウドセーブの保存
  *   GET  /api/leaderboard     クリアタイムのランキング
  * それ以外のパスは静的アセット（ゲーム本体）を返す。
  */
-import { beginLogin, finishLogin } from './auth';
+import { beginLogin, finishLogin, loginAvailable } from './auth';
 import { clearCookie, cookieNames, currentUser, destroySession, type SessionUser } from './session';
 import { HttpError, json, readJson } from './http';
 import { GEMS_ALL, parseSave } from './save';
@@ -43,7 +43,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
 
   if (pathname === '/api/me' && method === 'GET') {
     const user = await currentUser(request, env);
-    return json({ user: user ? publicUser(user) : null });
+    return json({ user: user ? publicUser(user) : null, loginAvailable: loginAvailable(env) });
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {
@@ -51,11 +51,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
     return json({ ok: true }, 200, { 'Set-Cookie': clearCookie(cookieNames(url).session, url) });
   }
 
-  if (pathname === '/api/save') {
+  if (pathname === '/api/save' || pathname.startsWith('/api/save/')) {
+    const slot = pathname === '/api/save' ? 'A' : pathname.slice('/api/save/'.length);
+    if (slot !== 'A' && slot !== 'B' && slot !== 'C') throw new HttpError(404, 'not_found');
     const user = await currentUser(request, env);
     if (!user) throw new HttpError(401, 'not_signed_in');
+    const owner = request.headers.get('X-Splash-Owner');
+    if (owner !== null && owner !== user.id) throw new HttpError(409, 'account_changed');
     if (method === 'GET') {
-      const row = await env.DB.prepare('SELECT data FROM saves WHERE user_id = ?').bind(user.id).first<{ data: string }>();
+      const select = slot === 'A'
+        ? env.DB.prepare('SELECT data FROM saves WHERE user_id = ?').bind(user.id)
+        : env.DB.prepare('SELECT data FROM save_slots WHERE user_id = ? AND slot = ?').bind(user.id, slot);
+      const row = await select.first<{ data: string }>();
       return json({ save: row ? (JSON.parse(row.data) as unknown) : null });
     }
     if (method === 'PUT') {
@@ -65,19 +72,26 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
       // ランキングに載せるのは、全クリア済みで現実的なタイムだけ
       const best = save.gems === GEMS_ALL && save.bestMs !== null && save.bestMs >= 60_000 ? save.bestMs : null;
       const now = Date.now();
-      await env.DB.prepare(
-        `INSERT INTO saves (user_id, data, gems, best_time_ms, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(user_id) DO UPDATE SET
-           data = excluded.data,
-           gems = excluded.gems,
+      // やり直し前や別タブから遅れて届いた保存は、新しい世代・時刻の冒険を巻き戻さない。
+      const table = slot === 'A' ? 'saves' : 'save_slots';
+      const columns = slot === 'A' ? 'user_id' : 'user_id, slot';
+      const values = slot === 'A' ? '?1' : '?1, ?6';
+      const version = (row: string) => `(COALESCE(json_extract(${row}.data, '$.resetAt'), 0), COALESCE(json_extract(${row}.data, '$.updatedAt'), 0))`;
+      const fresh = `${version('excluded')} >= ${version(table)}`;
+      const stmt = env.DB.prepare(
+        `INSERT INTO ${table} (${columns}, data, gems, best_time_ms, updated_at) VALUES (${values}, ?2, ?3, ?4, ?5)
+         ON CONFLICT(${columns}) DO UPDATE SET
+           data = CASE WHEN ${fresh} THEN excluded.data ELSE ${table}.data END,
+           gems = CASE WHEN ${fresh} THEN excluded.gems ELSE ${table}.gems END,
            best_time_ms = CASE
-             WHEN excluded.best_time_ms IS NULL THEN saves.best_time_ms
-             WHEN saves.best_time_ms IS NULL THEN excluded.best_time_ms
-             ELSE MIN(saves.best_time_ms, excluded.best_time_ms) END,
-           updated_at = excluded.updated_at`,
-      )
-        .bind(user.id, JSON.stringify(save), save.gems, best, now)
-        .run();
+             WHEN excluded.best_time_ms IS NULL THEN ${table}.best_time_ms
+             WHEN ${table}.best_time_ms IS NULL THEN excluded.best_time_ms
+             ELSE MIN(${table}.best_time_ms, excluded.best_time_ms) END,
+           updated_at = CASE WHEN ${fresh} THEN excluded.updated_at ELSE ${table}.updated_at END`,
+      );
+      const args = [user.id, JSON.stringify(save), save.gems, best, now];
+      if (slot !== 'A') args.push(slot);
+      await stmt.bind(...args).run();
       return json({ ok: true });
     }
     throw new HttpError(405, 'method_not_allowed');
@@ -86,10 +100,15 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
   if (pathname === '/api/leaderboard' && method === 'GET') {
     const user = await currentUser(request, env);
     const { results } = await env.DB.prepare(
-      `SELECT u.id AS id, u.name AS name, s.best_time_ms AS best
-       FROM saves s JOIN users u ON u.id = s.user_id
-       WHERE s.best_time_ms IS NOT NULL
-       ORDER BY s.best_time_ms ASC, s.updated_at ASC
+      `WITH times AS (
+         SELECT user_id, best_time_ms, updated_at FROM saves WHERE best_time_ms IS NOT NULL
+         UNION ALL
+         SELECT user_id, best_time_ms, updated_at FROM save_slots WHERE best_time_ms IS NOT NULL
+       )
+       SELECT u.id AS id, u.name AS name, MIN(t.best_time_ms) AS best
+       FROM times t JOIN users u ON u.id = t.user_id
+       GROUP BY u.id, u.name
+       ORDER BY best ASC, MAX(t.updated_at) ASC, u.id ASC
        LIMIT 20`,
     ).all<{ id: string; name: string; best: number }>();
     const entries = results.map((r, i) => ({ rank: i + 1, name: r.name, bestMs: r.best, me: user?.id === r.id }));

@@ -16,8 +16,12 @@ function redirectUri(url: URL): string {
   return `${url.origin}/api/auth/callback`;
 }
 
+export function loginAvailable(env: Env): boolean {
+  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+}
+
 export async function beginLogin(env: Env, url: URL): Promise<Response> {
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return json({ error: 'oauth_not_configured' }, 503);
+  if (!loginAvailable(env)) return json({ error: 'oauth_not_configured' }, 503);
   const state = randomToken(24);
   const nonce = randomToken(24);
   const verifier = randomToken(48);
@@ -52,7 +56,7 @@ export async function finishLogin(request: Request, env: Env, ctx: ExecutionCont
       headers: { Location: '/?login=failed', 'Set-Cookie': clearCookie(names.oauth, url), 'Cache-Control': 'no-store' },
     });
   };
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return fail('not_configured');
+  if (!loginAvailable(env)) return fail('not_configured');
 
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');

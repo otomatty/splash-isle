@@ -99,8 +99,11 @@ export const cyl = (rt: number, rb: number, h: number, seg = 12, hs = 1, open = 
 export const sph = (r: number, ws = 12, hs = 8) => new THREE.SphereGeometry(r, ws, hs);
 export const cone = (r: number, h: number, seg = 12) => new THREE.ConeGeometry(r, h, seg);
 
-/** 風で揺れる頂点アニメーションをマテリアルに足す（高い位置ほど大きく揺れる） */
-export function addSway(mat: THREE.Material, time: { value: number }, strength: number, heightScale: number): void {
+export const GRASS_DISTANCE = 65;
+
+/** 風で揺れる頂点アニメーション。草花は遠い区画を省く前に徐々に小さくする。 */
+export function addSway(mat: THREE.Material, time: { value: number }, strength: number, heightScale: number, fadeGrass = false): void {
+  mat.customProgramCacheKey = () => `sway-${strength}-${heightScale}-${fadeGrass}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = time;
     shader.vertexShader = shader.vertexShader
@@ -117,17 +120,18 @@ export function addSway(mat: THREE.Material, time: { value: number }, strength: 
         float sw_k = sw_h * sw_h * ${strength.toFixed(4)};
         float sw_t = uTime * 1.25 + sw_o.x * 0.21 + sw_o.y * 0.17;
         transformed.x += (sin(sw_t) + 0.5 * sin(sw_t * 2.3 + transformed.z * 1.7)) * sw_k;
-        transformed.z += (cos(sw_t * 0.8) + 0.5 * sin(sw_t * 1.9 + transformed.x * 1.3)) * sw_k * 0.7;`,
+        transformed.z += (cos(sw_t * 0.8) + 0.5 * sin(sw_t * 1.9 + transformed.x * 1.3)) * sw_k * 0.7;
+        ${fadeGrass ? `transformed *= 1.0 - smoothstep(45.0, ${GRASS_DISTANCE.toFixed(1)}, distance(cameraPosition, (modelMatrix * instanceMatrix[3]).xyz));` : ''}`,
       );
   };
 }
 
 /** ヤシの木（幹＋2段の葉＋実）を1つのジオメトリとして作る */
-export function buildPalmGeometry(): THREE.BufferGeometry {
+export function buildPalmGeometry(distant = false): THREE.BufferGeometry {
   const b = new GeoBatch();
   const H = 6.6;
   // 幹: 節のふくらみと、上へ行くほど曲がるカーブ
-  const trunk = cyl(0.16, 0.30, H, 9, 16);
+  const trunk = cyl(0.16, 0.30, H, distant ? 6 : 9, distant ? 5 : 16);
   trunk.translate(0, H / 2, 0);
   const tp = trunk.getAttribute('position');
   for (let i = 0; i < tp.count; i++) {
@@ -142,7 +146,7 @@ export function buildPalmGeometry(): THREE.BufferGeometry {
   const topX = 1.15;
   // 葉
   const frond = (len: number, tilt: number, droop: number, yaw: number, width: number) => {
-    const seg = 14;
+    const seg = distant ? 4 : 14;
     const pos: number[] = [];
     const col: number[] = [];
     let px = 0.1, py = 0, a = tilt;
@@ -192,11 +196,13 @@ export function buildPalmGeometry(): THREE.BufferGeometry {
   for (let i = 0; i < 9; i++) fronds.push(frond(3.5 + (i % 3) * 0.25, 0.42 + (i % 2) * 0.16, 1.75, (i / 9) * Math.PI * 2 + 0.2, 0.62));
   for (let i = 0; i < 6; i++) fronds.push(frond(2.5, 1.05, 1.35, (i / 6) * Math.PI * 2 + 0.6, 0.48));
   // 実
-  for (let i = 0; i < 4; i++) {
-    const a = i * 1.7 + 0.4;
-    b.add(sph(0.17, 8, 6), 0x5a3d1f, M(topX + Math.cos(a) * 0.24, H - 0.22, Math.sin(a) * 0.24), { top: 0x8a6a35 });
+  if (!distant) {
+    for (let i = 0; i < 4; i++) {
+      const a = i * 1.7 + 0.4;
+      b.add(sph(0.17, 8, 6), 0x5a3d1f, M(topX + Math.cos(a) * 0.24, H - 0.22, Math.sin(a) * 0.24), { top: 0x8a6a35 });
+    }
+    b.add(sph(0.3, 8, 6), 0x4f6f24, M(topX, H - 0.02, 0, 0, 1, 0.8, 1));
   }
-  b.add(sph(0.3, 8, 6), 0x4f6f24, M(topX, H - 0.02, 0, 0, 1, 0.8, 1));
   const body = b.build();
   const merged = mergeGeometries([body, ...fronds], false)!;
   merged.computeBoundingSphere();
@@ -224,10 +230,10 @@ export function buildRockGeometry(seed: number): THREE.BufferGeometry {
 }
 
 /** 低木 */
-export function buildBushGeometry(): THREE.BufferGeometry {
+export function buildBushGeometry(distant = false): THREE.BufferGeometry {
   const b = new GeoBatch();
   const lump = (x: number, y: number, z: number, r: number, c: number, c2: number) => {
-    const raw = new THREE.IcosahedronGeometry(r, 1);
+    const raw = new THREE.IcosahedronGeometry(r, distant ? 0 : 1);
     raw.deleteAttribute('normal');
     raw.deleteAttribute('uv');
     const g = mergeVertices(raw, 1e-4); // 頂点を共有させて、なめらかな陰影にする

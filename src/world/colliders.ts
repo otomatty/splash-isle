@@ -97,6 +97,19 @@ export interface Body {
   prevY: number;
 }
 
+/** 外向きの単位法線に垂直な見えない壁。体の半径を含めて押し戻し、壁に沿う速度は保つ。 */
+export function slideAlongBoundary(b: Body, nx: number, nz: number, limit: number): void {
+  const excess = b.x * nx + b.z * nz + b.radius - limit;
+  if (excess <= 0) return;
+  b.x -= excess * nx;
+  b.z -= excess * nz;
+  const outward = b.vx * nx + b.vz * nz;
+  if (outward > 0) {
+    b.vx -= outward * nx;
+    b.vz -= outward * nz;
+  }
+}
+
 const contact: Contact = { grounded: false, onTerrain: false, platform: null, hitWall: false, hitHead: false };
 
 /**
@@ -129,6 +142,11 @@ export function resolveBody(world: Colliders, b: Body, wasGrounded: boolean): Co
     const prevTop = top - bx.dy;
     const overTop = Math.abs(lx) < bx.hx + pr * 0.5 && Math.abs(lz) < bx.hz + pr * 0.5;
     const falling = b.vy <= 0.01 || bx.dy > 0;
+    // 縁の外で箱から離れているときは、下の段に足がついても上の段へ引き戻さない。
+    if (!overTop && falling && top - b.y <= stepUp) {
+      const leaving = ox < oz ? lx * (b.vx * bx.cos - b.vz * bx.sin) : lz * (b.vx * bx.sin + b.vz * bx.cos);
+      if (b.prevY >= prevTop - 0.03 || leaving > 0) continue;
+    }
     if (overTop && falling && (b.prevY >= prevTop - 0.03 || top - b.y <= stepUp)) {
       b.y = top;
       b.vy = 0;
