@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { M, box, cyl, type GeoBatch } from '../props';
+import { M, box, cyl, sph, type GeoBatch } from '../props';
 import { heightAt, type PathDef } from '../terrain';
 import type { Colliders } from '../colliders';
 
@@ -9,6 +9,60 @@ export const postRoad: PathDef = {
   width: 4.2,
 };
 export const postSquare = { x: 0, z: -45, r: 8 };
+
+// 荷台に集配鞄を下げ、次の便に出る途中の実用車。回廊の外のベンチ横に停める。
+function deliveryBicycle(b: GeoBatch, detail: GeoBatch, colliders: Colliders): void {
+  const x = -3.50, z = -51.65, y = heightAt(x, z), yaw = -0.13;
+  const base = M(x, y, z, yaw);
+  b.setBase(base);
+  detail.setBase(base);
+  const rubber = 0x343940, rim = 0xb3b5a2, frame = 0xb94632, leather = 0x855031;
+  const rear = -0.80, front = 0.80, axle = 0.46;
+  for (const wx of [rear, front]) {
+    b.add(new THREE.TorusGeometry(0.415, 0.045, 5, 16), rubber, M(wx, axle, 0));
+    b.add(new THREE.TorusGeometry(0.49, 0.032, 4, 10, Math.PI), frame, M(wx, axle, 0));
+    b.add(cyl(0.075, 0.075, 0.14, 8).rotateX(Math.PI / 2), rim, M(wx, axle, 0));
+    for (let i = 0; i < 4; i++) {
+      b.add(box(0.024, 0.78, 0.024), rim, M(wx, axle, 0, 0, 1, 1, 1, 0, i * Math.PI / 4));
+    }
+  }
+  // フレームの管は、車輪の軸・ペダル・サドル・ハンドルを同じ平面で結ぶ。
+  function tube(ax: number, ay: number, bx: number, by: number, radius: number, color: number, offset = 0): void {
+    const dx = bx - ax, dy = by - ay;
+    b.add(cyl(radius, radius, Math.hypot(dx, dy), 6), color,
+      M((ax + bx) / 2, (ay + by) / 2, offset, 0, 1, 1, 1, 0, -Math.atan2(dx, dy)));
+  }
+  tube(rear, axle, -0.14, 0.42, 0.045, frame);
+  tube(rear, axle, -0.38, 1.09, 0.042, frame);
+  tube(-0.14, 0.42, -0.40, 1.25, 0.051, frame);
+  tube(-0.14, 0.42, 0.49, 0.98, 0.059, frame);
+  tube(-0.28, 0.83, 0.40, 0.86, 0.04, frame);
+  tube(front, axle, 0.36, 1.34, 0.052, frame, 0.07);
+  tube(0.36, 1.34, 0.43, 1.48, 0.035, rim);
+  b.add(cyl(0.032, 0.032, 0.64, 6).rotateX(Math.PI / 2), rim, M(0.43, 1.48, 0));
+  for (const side of [-1, 1]) {
+    b.add(box(0.21, 0.064, 0.07), rubber, M(0.37, 1.48, 0.29 * side));
+  }
+  b.add(sph(0.17, 8, 4), leather, M(-0.40, 1.27, 0, 0, 1.55, 0.45, 1.03));
+  b.add(cyl(0.15, 0.15, 0.065, 10).rotateX(Math.PI / 2), 0x696e67, M(-0.14, 0.42, 0.095));
+  tube(-0.14, 0.42, -0.06, 0.24, 0.026, rim, 0.16);
+  b.add(box(0.14, 0.046, 0.12), rubber, M(-0.06, 0.24, 0.22));
+  b.add(box(0.08, 0.51, 0.07), rubber, M(-0.34, 0.255, 0.17, 0, 1, 1, 1, 0.47, 0.18));
+  // 後輪の上に手紙を詰めた帆布鞄。口から封筒と筒がのぞく。
+  b.add(box(0.87, 0.07, 0.40), 0x546564, M(-0.82, 0.99, 0));
+  tube(rear, axle, -1.08, 0.97, 0.023, rim, -0.12);
+  tube(rear, axle, -0.55, 0.97, 0.023, rim, -0.12);
+  b.add(box(0.63, 0.44, 0.28), 0x355f62, M(-0.85, 0.83, 0.27), { ao: 0.78 });
+  b.add(box(0.62, 0.15, 0.30), leather, M(-0.85, 1.02, 0.28));
+  for (const ox of [-0.20, 0.20]) detail.add(box(0.047, 0.31, 0.025), 0xe0b46d, M(-0.85 + ox, 0.91, 0.44));
+  b.add(box(0.37, 0.23, 0.03), 0xffeed1, M(-0.91, 1.13, 0.23, 0, 1, 1, 1, 0, -0.10));
+  detail.add(box(0.058, 0.057, 0.013), frame, M(-0.80, 1.20, 0.25));
+  b.add(cyl(0.065, 0.065, 0.44, 8), 0xe8c898, M(-0.62, 1.15, 0.22, 0, 1, 1, 1, 0, -0.20));
+  b.add(box(0.22, 0.042, 0.075), rim, M(0.48, 1.24, 0.07));
+  detail.add(cyl(0.079, 0.10, 0.14, 8).rotateZ(Math.PI / 2), 0x62706b, M(0.56, 1.28, 0.07));
+  detail.add(sph(0.085, 8, 4), 0xf9d68b, M(0.63, 1.28, 0.07, 0, 0.38, 0.93, 0.93));
+  colliders.addBox(x, y + 0.57, z, 2.40, 1.14, 0.48, yaw);
+}
 
 /** 海鳥郵便局。道路側の回廊は通り抜けられ、三つのアーチの奥に受付と仕分け窓がある。 */
 export function buildPostOffice(matte: GeoBatch, detail: GeoBatch, colliders: Colliders): void {
@@ -88,4 +142,5 @@ export function buildPostOffice(matte: GeoBatch, detail: GeoBatch, colliders: Co
   b.add(box(0.48, 0.11, 0.12), dark, M(px, 1.22, pz + 0.33));
   trim.add(box(0.32, 0.25, 0.1), cream, M(px, 0.85, pz + 0.33));
   colliders.addCyl(px, z + pz, y, y + 1.76, 0.42);
+  deliveryBicycle(b, trim, colliders);
 }

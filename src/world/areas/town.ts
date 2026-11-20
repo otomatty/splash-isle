@@ -130,7 +130,7 @@ export class Town extends Area {
     this.buildBeach();
     this.buildSigns();
     this.finishStatic();
-    buildTownBlocks(this.root, this.matMatte, this.colliders, this.terrain);
+    buildTownBlocks(this.root, this.matMatte, this.colliders, this.terrain, this.detailMeshes);
     buildOutskirts(this.root, this.matMatte, this.colliders, this.detailMeshes, this.softShadow);
     this.root.add(buildTownHorizon());
     const hillD = (x: number, z: number) => Math.hypot(x - HILL.x, z - HILL.z);
@@ -712,7 +712,7 @@ export class Town extends Area {
     this.npcs.push({
       x: HARBOR.x - 7, z: HARBOR.z - 4, yaw: face(HARBOR.x - 7, HARBOR.z - 4, HARBOR.x, HARBOR.z + 4),
       name: 'ハトバ', body: 0x3f7f6a, belly: 0xe8e2d0, hat: 0xe8483f,
-      lines: ['ヒカリ石が3つ集まると この倉庫に 異変がおきるそうだ', '東北東の岬に 難破船が見えるだろう？ あのサンゴ入り江への入口が 倉庫のしるしなんだ', 'ヒカリ石5つで 丘のふもとの 石の門も 目をさますぞ'],
+      lines: ['ヒカリ石が3つ集まると この倉庫に 異変がおきるそうだ', '東北東の岬に 難破船が見えるだろう？ あのサンゴ入り江への入口が 倉庫のしるしなんだ', 'ヒカリ石5つで 丘のふもとの 石の門も 目をさますぞ', 'あの竿の魚が乾いたら、朝市に届ける番だ'],
     });
     this.npcs.push({
       x: -27.1, z: 70.7, yaw: 2.5, name: 'ネリ', body: 0xb88059, belly: 0xffedcc, hat: 0x446f7e,
@@ -720,7 +720,7 @@ export class Town extends Area {
     });
     this.npcs.push({
       x: 2.7, z: -51.1, yaw: 0.18, name: 'ユウビ', body: 0x57768c, belly: 0xffefcc, hat: 0x993a34,
-      lines: ['朝いちばんの船に乗せる手紙を 仕分けているの', 'この石畳は配達の近道。東へ行けば港通り、西へたどれば灯台の道よ'],
+      lines: ['朝いちばんの船に乗せる手紙を 仕分けているの', '荷台の鞄に、刷りたての海鳥のはがきを積んだところよ', 'この石畳は配達の近道。東へ行けば港通り、西へたどれば灯台の道よ'],
     });
   }
 }

@@ -87,7 +87,7 @@ const r = await page.evaluate(async () => {
     key('KeyW', false);
     check(label, launched && landed !== null && landed >= needY - 0.6, `最高到達 ${f1(maxY)}m → 着地 ${landed === null ? 'なし' : f1(landed)}m（必要 ${needY}m）`);
   };
-  const go = async (k, e) => { g.mode = 'playing'; g.enterArea(k, e); await sleep(900); for (let i = 0; i < 20; i++) tick(); };
+  const go = async (k, e) => { g.mode = 'playing'; await g.enterArea(k, e); for (let i = 0; i < 20; i++) tick(); };
 
   // ═══ 町 ═══
   const town = g.town.area;

@@ -3,6 +3,7 @@ import type { Colliders } from '../colliders';
 import { GeoBatch, M, box, cyl } from '../props';
 import { heightAt, type PathDef } from '../terrain';
 
+const UPPER_SETBACK = 0.86;
 const LIME = 0xf4e7cf, WOOD = 0x926442, TIMBER = 0x624635, GLASS = 0x29556a, TERRACOTTA = 0xac7654;
 type Trade = 'washhouse' | 'potter' | 'nursery' | 'dyer' | 'bakery' | 'lampmaker';
 type Lane = 'south' | 'hill';
@@ -124,7 +125,7 @@ function buildHouse(lane: Lane, p: Plot, walls: GeoBatch, detail: GeoBatch, coll
   walls.add(box(w + 0.13, 0.50, p.depth + 0.13), 0xb9a383, M(0, 0.15, 0));
   // 手前の低い屋根を庇兼足場に残し、その奥だけを職人の住居にする。
   solid(0, groundH + 0.10, 0, w + 0.30, 0.20, p.depth + 0.30, p.trim);
-  const upperFront = front - 0.86, upperW = w - 0.48, upperDepth = p.depth - 1.06;
+  const upperFront = front - UPPER_SETBACK, upperW = w - 0.48, upperDepth = p.depth - 1.06;
   solid(0, groundH + 1.32, -0.33, upperW, 2.25, upperDepth, LIME);
   solid(0, h + 0.11, -0.33, upperW + 0.30, 0.22, upperDepth + 0.32, p.trim);
   const windowY = groundH + 1.34;
@@ -301,4 +302,17 @@ export function buildResidentialLane(lane: Lane, walls: GeoBatch, detail: GeoBat
   for (const house of LANES[lane]) buildHouse(lane, house, walls, detail, colliders);
   frontWalls(lane, walls, detail, colliders);
   if (lane === 'south') sharedGardens(walls, detail, colliders);
+}
+
+/** 仕事に合わせた上階の道具は、路地の装飾と同じ近景用バッチに渡す。 */
+export function visitArtisanWindows(place: (kind: number, family: number, x: number, y: number, z: number, yaw: number) => void): void {
+  const trades: Partial<Record<Trade, [number, number]>> = { washhouse: [0, 0], nursery: [1, 1], dyer: [2, 2], lampmaker: [3, 1] };
+  for (const houses of Object.values(LANES)) {
+    for (const p of houses) {
+      const kit = trades[p.trade];
+      if (!kit) continue;
+      const [x, z] = housePoint(p, 0, p.depth / 2 - UPPER_SETBACK + 0.03);
+      place(kit[0], kit[1], x, heightAt(p.x, p.z) + p.height + 0.49, z, p.yaw);
+    }
+  }
 }

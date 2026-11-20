@@ -107,6 +107,46 @@ function loaf(b: GeoBatch, x: number, y: number, z: number, yaw: number): void {
   b.add(sph(0.24, 8, 4), 0xcf884b, M(x, y, z, yaw, 1.52, 0.72, 0.88), { top: 0xf0bf7d });
 }
 
+// 朝市の島みかんをパン用に煮る台。広場から来ると、開いた銅鍋と詰めかけの瓶が見える。
+function marmaladeTable(b: GeoBatch, detail: GeoBatch, colliders: Colliders, x: number, z: number): void {
+  const y = heightAt(x, z), yaw = -Math.PI / 2;
+  const base = M(x, y, z, yaw);
+  b.setBase(base);
+  detail.setBase(base);
+  const copper = 0xac6747, peel = 0xf4ab3d, syrup = 0xc26424;
+  b.add(box(2.67, 0.16, 0.97), OAK, M(0, 0.89, 0));
+  for (const ox of [-1.17, 1.17]) {
+    for (const oz of [-0.34, 0.34]) b.add(box(0.13, 0.86, 0.13), TIMBER, M(ox, 0.43, oz));
+  }
+  b.add(box(2.40, 0.11, 0.78), OAK, M(0, 0.23, 0));
+  // 銅鍋は外側と口の折り返しを一緒に旋回させる。両脇の持ち手に木べらが渡る。
+  const rim = [[0.25,0], [0.31,0.05], [0.42,0.27], [0.43,0.38], [0.40,0.40], [0.37,0.38], [0.34,0.25]];
+  b.add(new THREE.LatheGeometry(rim.map(([r, h]) => new THREE.Vector2(r, h)), 12), copper, M(-0.66, 0.97, 0.04), { ao: 0.75 });
+  b.add(cyl(0.37, 0.35, 0.03, 12), syrup, M(-0.66, 1.265, 0.04));
+  for (const side of [-1, 1]) b.add(new THREE.TorusGeometry(0.10, 0.026, 4, 8), TIMBER, M(-0.66 + side * 0.48, 1.28, 0.04));
+  b.add(box(1.02, 0.045, 0.071), 0xe7be7b, M(-0.69, 1.41, 0.04, 0.23));
+  for (const [dx, dz] of [[-0.18, 0.12], [0.03, -0.16], [0.16, 0.14]]) {
+    detail.add(cyl(0.075, 0.075, 0.018, 7), peel, M(-0.66 + dx, 1.288, 0.04 + dz));
+  }
+  for (const [jx, jz, filled] of [[0.22, -0.16, 1], [0.69, -0.17, 1], [0.96, 0.18, 0]]) {
+    b.add(cyl(0.14, 0.13, 0.30, 8), filled ? syrup : 0x99a78c, M(jx, 1.13, jz), { top: filled ? 0xe19842 : 0xc8d4b8 });
+    b.add(cyl(0.15, 0.15, 0.075, 8), filled ? LINEN : 0x75938e, M(jx, 1.30, jz));
+    if (filled) {
+      detail.add(box(0.15, 0.11, 0.02), LINEN, M(jx, 1.13, jz + 0.13));
+      detail.add(cyl(0.049, 0.049, 0.024, 7).rotateX(Math.PI / 2), peel, M(jx, 1.13, jz + 0.145));
+    }
+  }
+  // 断面を上にした半割りの実と、次の一鍋を待つみかんのかご。
+  detail.add(box(0.47, 0.03, 0.31), 0xf3dec1, M(0.32, 0.989, 0.24, 0.09));
+  detail.add(cyl(0.105, 0.070, 0.07, 9), peel, M(0.31, 1.039, 0.24));
+  detail.add(cyl(0.085, 0.085, 0.011, 9), 0xffcc71, M(0.31, 1.08, 0.24));
+  b.add(cyl(0.42, 0.34, 0.30, 10), 0xbe9763, M(0.58, 0.44, 0));
+  for (const [ox, oz] of [[0.37,-0.13], [0.68,-0.12], [0.51,0.15], [0.79,0.11]]) {
+    detail.add(sph(0.14, 7, 4), peel, M(ox, 0.62, oz));
+  }
+  colliders.addBox(x, y + 0.49, z, 2.67, 0.98, 0.97, yaw);
+}
+
 // 港通りへ曲がる角のパン工房。窯の火口と売り窓を石のカウンターでつなぐ。
 function bakery(b: GeoBatch, detail: GeoBatch, colliders: Colliders): void {
   const x = 27.5, z = -9, y = heightAt(x, z);
@@ -213,6 +253,7 @@ export function buildTownMarket(b: GeoBatch, detail: GeoBatch, colliders: Collid
   const fruitTop = marketStall(b, detail, colliders, 9.5, -7.5, 0.9, true);
   const textileTop = marketStall(b, detail, colliders, -10.5, 7, -2.2, false);
   bakery(b, detail, colliders);
+  marmaladeTable(b, detail, colliders, 23.55, -7.9);
   potteryCart(b, detail, colliders);
   return [fruitTop, textileTop];
 }

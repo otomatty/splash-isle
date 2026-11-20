@@ -1,9 +1,11 @@
 import * as THREE from 'three';
-import { M, box, cone, cyl, sph } from '../props';
+import { VOLCANO_MISSIONS, LAGOON_MISSIONS, PLATEAU_MISSIONS, type StageKey } from './stage-catalog';
+import { dressSpring, dressLagoon, dressPlateau } from './stage-worksites';
+import { GeoBatch, M, box, cone, cyl, sph } from '../props';
 import { Area, BLUE, STONE, TEAL, TERRACOTTA, WALLS, WOOD, WOOD_DARK, type AreaKey, type Look, type MissionDef } from '../area';
 import { DEEP, DEFAULT_PALETTE, heightAt, type Palette, type TerrainDef } from '../terrain';
 import { Goop, scatterGoop } from '../goop';
-import type { Box } from '../colliders';
+import type { Box, Colliders } from '../colliders';
 import { fbm, sstep } from '../../engine/noise';
 
 const COLORS = [0xe8483f, 0xf6c443, 0x22a6a0, 0x3a78c8, 0xf08a2e];
@@ -26,6 +28,15 @@ abstract class Stage extends Area {
 
   protected guide(x: number, z: number, faceX: number, faceZ: number, name: string, lines: string[], body: number, hat: number): void {
     this.npcs.push({ x, z, yaw: Math.atan2(faceX - x, faceZ - z), name, lines, body, belly: 0xfff4d8, hat });
+  }
+
+  protected addWorksite(build: (base: GeoBatch, detail: GeoBatch, colliders: Colliders) => void): void {
+    const detail = new GeoBatch();
+    build(this.matte, detail, this.colliders);
+    const mesh = new THREE.Mesh(detail.build(), this.matMatte);
+    mesh.receiveShadow = true;
+    this.root.add(mesh);
+    this.detailMeshes.push(mesh);
   }
 
   /** 石で縁取った湯だまり（入ると水を補給できる） */
@@ -86,12 +97,6 @@ export const VOLCANO_TERRAIN: TerrainDef = {
   palette: VOLCANO_PALETTE,
 };
 
-export const VOLCANO_MISSIONS: MissionDef[] = [
-  { gem: 5, kind: 'reach', title: '火口のまんなかへ', hint: '間欠泉で段をのぼり <b>火口の岩</b>をめざそう' },
-  { gem: 6, kind: 'clean', title: '温泉街のスミを洗い流そう', hint: '温泉街の<b>スミ</b>を洗い流そう' },
-  { gem: 7, kind: 'collect', title: '山にちらばるヒトデを8つ', hint: '山じゅうの<b>ヒトデ</b>をさがそう' },
-];
-
 export class Volcano extends Stage {
   readonly key: AreaKey = 'volcano';
   readonly name = 'ゆけむり山';
@@ -151,9 +156,10 @@ export class Volcano extends Stage {
       this.shells.push(new THREE.Vector3(p[0], heightAt(p[0], p[1]) + 0.9, p[1]));
     }
 
+    this.addWorksite(dressSpring);
     this.guide(3.5, 86, 0, 90, 'ユノ', [
       ['火口のまんなかの岩に ヒカリ石があるよ', '石で囲まれた間欠泉は 噴き上がるときに乗ると 上の段まで飛べるんだ', '2段目へは 東がわの坂道からも 上がれるよ'],
-      ['温泉街が スミで べとべとなんだ…', '湯だまりに入ると 水を補給できるよ', 'ぜんぶ洗い流すと ヒカリ石が出てくるはず'],
+      ['温泉街が スミで べとべとなんだ…', '卵の籠がつるしてある湯だまりで 水を補給できるよ', 'ぜんぶ洗い流すと ヒカリ石が出てくるはず'],
       ['山じゅうに ヒトデが 8つ ちらばってるよ', 'いちばん上の火口にも あるらしい', '間欠泉で どんどん上へ！'],
     ][episode], 0xc9703f, 0x7a3b2a);
 
@@ -228,12 +234,6 @@ export const LAGOON_TERRAIN: TerrainDef = {
   plazas: [],
   palette: LAGOON_PALETTE,
 };
-
-export const LAGOON_MISSIONS: MissionDef[] = [
-  { gem: 8, kind: 'reach', title: '難破船のマストのてっぺんへ', hint: '難破船の <b>マストのてっぺん</b>をめざそう' },
-  { gem: 9, kind: 'defeat', title: '入り江のスミボウたいじ', hint: '入り江の<b>スミボウ</b>をぜんぶやっつけよう' },
-  { gem: 10, kind: 'collect', title: 'サンゴの上のヒトデを8つ', hint: '入り江の<b>ヒトデ</b>をさがそう' },
-];
 
 export class Lagoon extends Stage {
   readonly key: AreaKey = 'lagoon';
@@ -353,8 +353,9 @@ export class Lagoon extends Stage {
       this.shells.push(new THREE.Vector3(x, heightAt(x, z) + 0.9, z));
     }
 
+    this.addWorksite(dressLagoon);
     this.guide(4, 71, 0, 74, 'ナギ', [
-      ['まんなかの難破船が見える？ マストのてっぺんが 光ってるんだ', '入り江は浅いから 泳いで渡れるよ', 'マストの足場を ぐるぐる のぼっていこう'],
+      ['まんなかの難破船が見える？ マストのてっぺんが 光ってるんだ', '海図の赤い印が あの船だよ。ここから泳いで渡れるよ', 'マストの足場を ぐるぐる のぼっていこう'],
       ['入り江に スミボウが わいて出たんだ！', 'ひときわ大きいやつは 水をたっぷり かけないと たおせないよ', '上から踏みつけるのも 効くよ'],
       ['ヒトデが サンゴの柱の上に いるよ', '北の岬の上にも 1つ。間欠泉で 飛び上がれるよ', '船のマストにも かくれてるかも'],
     ][episode], 0x3f8fb0, 0xf6c443);
@@ -433,12 +434,6 @@ export const PLATEAU_TERRAIN: TerrainDef = {
   plazas: [{ x: MESAS[0].x, z: MESAS[0].z, r: 9 }],
   palette: PLATEAU_PALETTE,
 };
-
-export const PLATEAU_MISSIONS: MissionDef[] = [
-  { gem: 11, kind: 'reach', title: 'いちばん高い台地へ', hint: '吊り橋と気球をわたって <b>いちばん高い台地</b>へ' },
-  { gem: 12, kind: 'clean', title: '台地の村のスミを洗い流そう', hint: '村の<b>スミ</b>を洗い流そう' },
-  { gem: 13, kind: 'collect', title: '空にちらばるヒトデを8つ', hint: '台地じゅうの<b>ヒトデ</b>をさがそう' },
-];
 
 export class Plateau extends Stage {
   readonly key: AreaKey = 'plateau';
@@ -560,8 +555,9 @@ export class Plateau extends Stage {
     }
     for (const [x, z] of [[22, 80], [-24, 52], [-60, 50], [-60, -20], [0, -70], [60, -40], [78, 20], [50, 50]]) this.shells.push(new THREE.Vector3(x, heightAt(x, z) + 0.9, z));
 
+    this.addWorksite(dressPlateau);
     this.guide(3.6, 91, 0, 94, 'フウ', [
-      ['いちばん高い台地の ほこらに ヒカリ石があるよ', 'まずは階段で村へ。そこから吊り橋と気球を わたっていくんだ', '落ちても だいじょうぶ。ふもとから またのぼれるよ'],
+      ['いちばん高い台地の ほこらに ヒカリ石があるよ', 'まずは階段で村へ。そこから吊り橋と気球を わたっていくんだ', '吹き流しのある丘から 気球を渡るんだ。落ちても ふもとから またのぼれるよ'],
       ['上の村が スミだらけに なっちゃった…', '村の噴水で 水を補給できるよ', 'ぜんぶ洗い流すと ヒカリ石が出てくるはず'],
       ['ヒトデが 台地のあちこちに 8つ あるよ', '気球の上や 高い台地にも かくれてる', 'ふもとの草原も さがしてみて'],
     ][episode], 0x6fa85a, 0xe8483f);
@@ -596,8 +592,8 @@ export class Plateau extends Stage {
   }
 }
 
-export const STAGE_INFO: Record<Exclude<AreaKey, 'town'>, { name: string; blurb: string; missions: MissionDef[]; terrain: TerrainDef; create: (episode: number) => Area }> = {
-  volcano: { name: 'ゆけむり山', blurb: '湯けむりの立つ温泉火山', missions: VOLCANO_MISSIONS, terrain: VOLCANO_TERRAIN, create: (e) => new Volcano(e) },
-  lagoon: { name: 'サンゴ入り江', blurb: '難破船のねむる環礁', missions: LAGOON_MISSIONS, terrain: LAGOON_TERRAIN, create: (e) => new Lagoon(e) },
-  plateau: { name: 'そよかぜ台地', blurb: '吊り橋と気球の空の村', missions: PLATEAU_MISSIONS, terrain: PLATEAU_TERRAIN, create: (e) => new Plateau(e) },
+export const STAGE_WORLDS: Record<StageKey, { terrain: TerrainDef; create: (episode: number) => Area }> = {
+  volcano: { terrain: VOLCANO_TERRAIN, create: e => new Volcano(e) },
+  lagoon: { terrain: LAGOON_TERRAIN, create: e => new Lagoon(e) },
+  plateau: { terrain: PLATEAU_TERRAIN, create: e => new Plateau(e) },
 };

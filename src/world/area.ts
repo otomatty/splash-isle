@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { GeoBatch, M, addSway, box, buildBushGeometry, buildGrassTuftGeometry, buildPalmGeometry, buildRockGeometry, cone, cyl, sph } from './props';
+import { GRASS_DISTANCE, GeoBatch, M, addSway, box, buildBushGeometry, buildGrassTuftGeometry, buildPalmGeometry, buildRockGeometry, cone, cyl, sph } from './props';
 import { Colliders, slideAlongBoundary, type Body, type Box } from './colliders';
 import { heightAt, normalAt, pathDistance, type TerrainDef } from './terrain';
 import { Goop } from './goop';
@@ -78,6 +78,8 @@ export const mul = (a: THREE.Matrix4, b: THREE.Matrix4) => a.clone().multiply(b)
 const shared = <T extends THREE.BufferGeometry>(g: T): T => { g.userData.shared = true; return g; };
 let palmGeo: THREE.BufferGeometry | null = null;
 let bushGeo: THREE.BufferGeometry | null = null;
+let farPalmGeo: THREE.BufferGeometry | null = null;
+let farBushGeo: THREE.BufferGeometry | null = null;
 let tuftGeo: THREE.BufferGeometry | null = null;
 const rockGeos = new Map<number, THREE.BufferGeometry>();
 const rockGeo = (seed: number) => {
@@ -159,6 +161,7 @@ export abstract class Area {
   dispose(): void {
     this.root.traverse((o) => {
       const m = o as THREE.Mesh;
+      if (m instanceof THREE.InstancedMesh) m.dispose();
       if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
       const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
       for (const mat of mats) {
@@ -570,12 +573,24 @@ export abstract class Area {
 
   /** 低品質設定で影を落とさなくするもの（ヤシ・低木） */
   readonly softShadow: THREE.Object3D[] = [];
+  private readonly trees: { mesh: THREE.InstancedMesh; near: THREE.BufferGeometry; far: THREE.BufferGeometry }[] = [];
+  private readonly grass: THREE.InstancedMesh[] = [];
+
+  updateVegetation(camera: THREE.Vector3, showGrass: boolean): void {
+    for (const { mesh, near, far } of this.trees) {
+      const distance = mesh.boundingBox!.distanceToPoint(camera);
+      mesh.geometry = distance < (mesh.geometry === near ? 48 : 40) ? near : far;
+    }
+    for (const mesh of this.grass) {
+      mesh.visible = showGrass && mesh.boundingBox!.distanceToPoint(camera) <= GRASS_DISTANCE + 1;
+    }
+  }
 
   /**
    * 同じ形をたくさん並べる。地面を区画に分けて区画ごとのインスタンスメッシュにするので、
    * 画面や影の範囲に入らない区画はまとめて描画を省ける。
    */
-  protected addInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, mats: THREE.Matrix4[], opts: { shadow: boolean; soft?: boolean; detail?: boolean; colors?: THREE.Color[]; cell?: number }): void {
+  protected addInstanced(geo: THREE.BufferGeometry, mat: THREE.Material, mats: THREE.Matrix4[], opts: { shadow: boolean; soft?: boolean; detail?: boolean; far?: THREE.BufferGeometry; colors?: THREE.Color[]; cell?: number }): void {
     const cell = opts.cell ?? 56;
     const groups = new Map<string, number[]>();
     mats.forEach((m, i) => {
@@ -595,7 +610,12 @@ export abstract class Area {
       mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
       this.root.add(mesh);
-      if (opts.detail) this.detailMeshes.push(mesh);
+      if (opts.far || opts.detail) mesh.computeBoundingBox();
+      if (opts.far) this.trees.push({ mesh, near: geo, far: opts.far });
+      if (opts.detail) {
+        this.detailMeshes.push(mesh);
+        this.grass.push(mesh);
+      }
       if (opts.soft) this.softShadow.push(mesh);
     }
   }
@@ -611,6 +631,7 @@ export abstract class Area {
       const palmMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, side: THREE.DoubleSide });
       addSway(palmMat, this.swayTime, 0.0052, 1);
       palmGeo ??= shared(buildPalmGeometry());
+      farPalmGeo ??= shared(buildPalmGeometry(true));
       const palms: THREE.Matrix4[] = [];
       let guard = 0;
       while (palms.length < o.palms && guard++ < 12000) {
@@ -634,7 +655,7 @@ export abstract class Area {
         palms.push(dummy.matrix.clone());
         this.colliders.addCyl(x, z, h - 1, h + 5.2 * s, 0.3 * s);
       }
-      this.addInstanced(palmGeo, palmMat, palms, { shadow: true, soft: true });
+      this.addInstanced(palmGeo, palmMat, palms, { shadow: true, soft: true, far: farPalmGeo });
     }
 
     // 低木
@@ -642,6 +663,7 @@ export abstract class Area {
       const bushMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
       addSway(bushMat, this.swayTime, 0.03, 1);
       bushGeo ??= shared(buildBushGeometry());
+      farBushGeo ??= shared(buildBushGeometry(true));
       const bushes: THREE.Matrix4[] = [];
       let guard = 0;
       while (bushes.length < o.bushes && guard++ < 14000) {
@@ -657,16 +679,16 @@ export abstract class Area {
         dummy.updateMatrix();
         bushes.push(dummy.matrix.clone());
       }
-      this.addInstanced(bushGeo, bushMat, bushes, { shadow: true, soft: true });
+      this.addInstanced(bushGeo, bushMat, bushes, { shadow: true, soft: true, far: farBushGeo });
     }
 
     // 草むらと花
     if (o.grass > 0) {
       const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide });
-      addSway(grassMat, this.swayTime, 0.5, 1);
+      addSway(grassMat, this.swayTime, 0.5, 1, true);
       tuftGeo ??= shared(buildGrassTuftGeometry());
       const flowerMat = new THREE.MeshStandardMaterial({ roughness: 0.7 });
-      addSway(flowerMat, this.swayTime, 0.5, 1);
+      addSway(flowerMat, this.swayTime, 0.5, 1, true);
       const flowerGeo = new THREE.IcosahedronGeometry(0.06, 0);
       flowerGeo.scale(1, 0.7, 1);
       flowerGeo.translate(0, 0.24, 0);
@@ -699,7 +721,7 @@ export abstract class Area {
 
     // 岩（海岸線と丘の斜面）
     const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, flatShading: true });
-    const addRocks = (seed: number, mats: THREE.Matrix4[]) => this.addInstanced(rockGeo(seed), rockMat, mats, { shadow: true });
+    const addRocks = (seed: number, mats: THREE.Matrix4[]) => this.addInstanced(rockGeo(seed), rockMat, mats, { shadow: true, cell: 112 });
     const place = (x: number, z: number, s: number, mats: THREE.Matrix4[]) => {
       const h = heightAt(x, z);
       dummy.position.set(x, h + 0.1 * s, z);

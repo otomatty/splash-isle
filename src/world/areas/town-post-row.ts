@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Colliders } from '../colliders';
-import { M, box, type GeoBatch } from '../props';
+import { M, box, cyl, sph, type GeoBatch } from '../props';
 import { heightAt } from '../terrain';
 import { postRoad } from './town-post-office';
 
@@ -43,6 +43,42 @@ export function inPostRow(x: number, z: number): boolean {
     z >= p.front - p.depth - 0.45 && z <= roadEdge(x) + 0.45);
 }
 
+// 工房の店先。左の糸綴じ本をねじプレスに挟み、右の裁ち台に次の折丁を重ねる。
+function binderyBench(b: GeoBatch, detail: GeoBatch, colliders: Colliders, x: number, z: number): void {
+  const y = heightAt(x, z), base = M(x, y, z);
+  b.setBase(base);
+  detail.setBase(base);
+  const iron = 0x41585a, timber = 0x805034, brass = 0xc99952, paper = 0xffe9c0, cloth = 0x9e5349;
+  b.add(box(2.58, 0.16, 0.94), timber, M(0, 0.97, 0));
+  for (const ox of [-1.11, 1.11]) {
+    for (const oz of [-0.33, 0.33]) b.add(box(0.17, 0.94, 0.17), WALNUT, M(ox, 0.47, oz));
+  }
+  b.add(box(2.29, 0.095, 0.68), timber, M(0, 0.31, 0));
+  // 鋳鉄の縦枠と押し板、ねじ軸、両端に丸い握りのついた横棒。
+  b.add(box(1.17, 0.13, 0.73), iron, M(-0.60, 1.115, 0));
+  for (const ox of [-1.08, -0.12]) b.add(cyl(0.07, 0.085, 0.97, 7), iron, M(ox, 1.61, 0));
+  b.add(box(1.15, 0.18, 0.26), iron, M(-0.60, 2.03, 0));
+  b.add(cyl(0.063, 0.063, 0.67, 8), brass, M(-0.60, 1.92, 0));
+  detail.add(cyl(0.09, 0.09, 0.10, 8), brass, M(-0.60, 2.15, 0));
+  b.add(cyl(0.034, 0.034, 0.77, 7).rotateZ(Math.PI / 2), brass, M(-0.60, 2.25, 0));
+  for (const ox of [-0.98, -0.22]) b.add(sph(0.066, 7, 4), WALNUT, M(ox, 2.25, 0));
+  b.add(box(0.88, 0.14, 0.60), iron, M(-0.60, 1.61, 0));
+  for (let i = 0; i < 2; i++) {
+    b.add(box(0.77, 0.13, 0.51), paper, M(-0.60, 1.26 + 0.18 * i, 0.04));
+    b.add(box(0.81, 0.045, 0.54), i ? cloth : 0x4c7775, M(-0.60, 1.34 + 0.18 * i, 0.04));
+  }
+  // 曲がりかけた台紙、金色の刃押さえ、裁断用の長いレバー。
+  b.add(box(0.94, 0.12, 0.72), 0x526f66, M(0.65, 1.11, 0.02));
+  b.add(box(0.63, 0.085, 0.56), paper, M(0.53, 1.213, 0.05, -0.06));
+  b.add(box(0.08, 0.055, 0.68), brass, M(0.78, 1.25, 0.03));
+  b.add(box(0.055, 0.13, 0.78), 0x7b8982, M(0.99, 1.42, 0.03, 0, 1, 1, 1, -0.47));
+  b.add(box(0.10, 0.10, 0.25), cloth, M(0.99, 1.65, 0.42, 0, 1, 1, 1, -0.47));
+  for (let i = 0; i < 3; i++) {
+    detail.add(box(0.77, 0.11, 0.60), i % 2 ? 0x547979 : paper, M(0.47, 0.41 + i * 0.117, 0.01, i * 0.055));
+  }
+  detail.add(cyl(0.13, 0.13, 0.26, 8), 0xe2a361, M(-0.65, 0.49, 0));
+  colliders.addBox(x, y + 0.53, z, 2.58, 1.06, 0.94);
+}
 function buildHouse(p: House, matte: GeoBatch, detail: GeoBatch, colliders: Colliders): void {
   const cx = p.left + p.width / 2, y = heightAt(cx, p.front);
   const base = M(cx, y, p.front), w = p.width, d = p.depth, h = p.eaves;
@@ -146,8 +182,15 @@ function buildHouse(p: House, matte: GeoBatch, detail: GeoBatch, colliders: Coll
         detail.add(box(0.20, tall, 0.15), [0x9e5149, 0x497977, 0xdaaa65][i % 3], M(display - 0.78 + i * 0.255, 0.92 + tall / 2, 0.24));
       }
     } else {
+      // 窓辺の乾燥ひもに海鳥の絵はがき。刷り色の違う3枚を木ばさみでつるす。
+      detail.add(box(2.36, 0.034, 0.04), WALNUT, M(display, 1.98, 0.28));
       for (let i = -1; i <= 1; i++) {
-        detail.add(box(0.48, 0.58, 0.035), i === 0 ? 0xc9745c : 0xe9d397, M(display + i * 0.63, 1.51, 0.23, 0, 1, 1, 1, 0, i * 0.09));
+        const card = M(display + i * 0.65, 1.68, 0.32, 0, 1, 1, 1, 0, i * 0.06);
+        detail.add(box(0.53, 0.61, 0.035), LIME, card);
+        detail.add(box(0.45, 0.42, 0.022), [0x729b9e, 0xda926d, 0xa3af84][i + 1], card.clone().multiply(M(0, 0.03, 0.036)));
+        detail.add(cyl(0.081, 0.081, 0.025, 8).rotateX(Math.PI / 2), 0xf5d28b, card.clone().multiply(M(-0.08, 0.12, 0.059)));
+        for (const side of [-1, 1]) detail.add(box(0.15, 0.034, 0.035), LIME, card.clone().multiply(M(side * 0.060, -0.001, 0.076, 0, 1, 1, 1, 0, side * 0.30)));
+        detail.add(box(0.051, 0.15, 0.063), WALNUT, M(display + i * 0.65, 1.955, 0.355));
       }
     }
   } else if (p.use === 'dispatch') {
@@ -174,5 +217,8 @@ function buildHouse(p: House, matte: GeoBatch, detail: GeoBatch, colliders: Coll
 }
 
 export function buildPostRow(matte: GeoBatch, detail: GeoBatch, colliders: Colliders): void {
-  for (const house of houses) buildHouse(house, matte, detail, colliders);
+  for (const house of houses) {
+    buildHouse(house, matte, detail, colliders);
+    if (house.use === 'bindery') binderyBench(matte, detail, colliders, house.left + 2.05, house.front + 1.13);
+  }
 }

@@ -3,6 +3,7 @@ import { lerp, sstep } from '../../engine/noise';
 import type { Colliders } from '../colliders';
 import { GeoBatch, M, box, cyl, sph } from '../props';
 import { heightAt } from '../terrain';
+import { citrusCrate } from './town-outskirts';
 
 const WHITE = 0xfff3d6, JADE = 0x238e92, DEEP_BLUE = 0x32637b;
 const CORAL = 0xdb5d46, HONEY = 0xdbab69, WOOD = 0x966d48;
@@ -12,11 +13,20 @@ export function beachShelf(x: number, z: number, height: number): number {
   if (z < 98 || z > 216 || Math.abs(x) >= 78) return height;
   if (height >= 0) {
     const backshore = sstep(98, 110, z) * (1 - sstep(121, 132, z)) * (1 - sstep(32, 50, Math.abs(x)));
-    return height - backshore * 0.95 * Math.max(0, height - 0.92);
+    height -= backshore * 0.95 * Math.max(0, height - 0.92);
+  } else {
+    const cove = (1 - sstep(48, 78, Math.abs(x))) * sstep(105, 135, z) * (1 - sstep(185, 216, z));
+    const slope = lerp(0.24, 1, sstep(4.4, 11.5, -height));
+    height = lerp(height, height * slope, cove);
   }
-  const cove = (1 - sstep(48, 78, Math.abs(x))) * sstep(105, 135, z) * (1 - sstep(185, 216, z));
-  const slope = lerp(0.24, 1, sstep(4.4, 11.5, -height));
-  return lerp(height, height * slope, cove);
+  // 砂の縁に囲まれた窪みを水路で海とつなぐ。海面と歩行判定は湾と同じ地形を読む。
+  const dx = x - 34, dz = z - 136;
+  if (Math.abs(dx) < 7 && dz > -6 && dz < 12) {
+    const basin = -0.51 + 0.76 * ((dx / 4.3) ** 2 + (dz / 2.8) ** 2);
+    const inlet = dz > 0 ? -0.39 + Math.abs(dx - dz * 0.27) * 0.23 : height;
+    height = Math.min(height, basin, inlet);
+  }
+  return height;
 }
 
 export function inBeachAccess(x: number, z: number): boolean {
@@ -153,6 +163,91 @@ function watchHouse(b: GeoBatch, detail: GeoBatch, c: Colliders): void {
   b.add(new THREE.ExtrudeGeometry(flag, { depth: 0.045, bevelEnabled: false }), 0xffbc49, M(-1.65, 7.30, -1.22));
 }
 
+/** 救護所の東に置いた貸出棚。マスクと足ひれを返す横に、農園から届いた果実と飲み水を並べる。 */
+function rentalStand(b: GeoBatch, detail: GeoBatch, c: Colliders): void {
+  const x = 19.35, z = 118.3, y = heightAt(x, z), base = M(x, y, z);
+  b.setBase(base); detail.setBase(base);
+  for (const dx of [-1.76, 1.76]) {
+    b.add(box(0.15, 2.67, 0.15), HONEY, M(dx, 1.30, -0.40));
+    b.add(box(0.15, 1.25, 0.15), WOOD, M(dx, 0.56, 0.67));
+  }
+  b.add(box(3.68, 1.76, 0.13), DEEP_BLUE, M(0, 1.53, -0.41));
+  b.add(box(3.78, 0.13, 1.35), WHITE, M(0, 1.08, 0.12));
+  c.addBox(x, y + 0.53, z + 0.12, 3.78, 1.24, 1.35);
+  // 色違いのマスクの上へ曲がったシュノーケルを出す。ガラスの面は不透明の頂点色で表現する。
+  for (const [i, color] of [JADE, CORAL, 0xecb244].entries()) {
+    const px = -1.13 + i * 1.12;
+    b.add(box(0.73, 0.29, 0.15), color, M(px, 1.91, -0.27));
+    for (const side of [-1, 1]) b.add(box(0.235, 0.157, 0.032), 0xbbf0e8, M(px + side * 0.151, 1.925, -0.18));
+    b.add(cyl(0.043, 0.055, 0.63, 7), color, M(px + 0.39, 2.00, -0.245, 0, 1, 1, 1, 0, -0.13));
+    detail.add(cyl(0.061, 0.057, 0.105, 7), WHITE, M(px + 0.43, 2.29, -0.245));
+    // 踵の開いた長い足ひれを二枚ずつ手前に向けて置く。
+    for (const side of [-1, 1]) {
+      const fin = M(px + side * 0.19, 1.20, 0.20, side * 0.11);
+      b.add(cyl(1, 1, 0.07, 7), color, fin.clone().multiply(M(0, 0, 0.09, 0, 0.16, 1, 0.49)));
+      detail.add(box(0.175, 0.08, 0.19), DEEP_BLUE, fin.clone().multiply(M(0, 0.07, -0.14)));
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const color = i % 2 ? JADE : WHITE;
+    b.add(box(0.79, 0.08, 1.38), color, M((i - 2) * 0.79, 2.57, -0.02, 0, 1, 1, 1, 0.16));
+    b.add(box(0.79, 0.20, 0.07), color, M((i - 2) * 0.79, 2.39, 0.64));
+  }
+  const drinkX = x + 3.23, drinkZ = z + 0.44, drinkY = heightAt(drinkX, drinkZ);
+  const drinks = M(drinkX, drinkY, drinkZ, -0.12);
+  b.setBase(drinks); detail.setBase(drinks);
+  b.add(cyl(0.55, 0.48, 0.80, 12), HONEY, M(0, 0.38, 0));
+  b.add(cyl(0.48, 0.51, 0.60, 12), JADE, M(0, 1.03, 0));
+  b.add(cyl(0.51, 0.52, 0.09, 12), WHITE, M(0, 1.36, 0));
+  b.add(box(0.15, 0.14, 0.30), DEEP_BLUE, M(0, 0.96, 0.51));
+  b.add(cyl(0.07, 0.07, 0.13, 7), WHITE, M(0, 0.85, 0.60));
+  // 給水用の積み重ねたカップを蓋の縁に伏せてある。
+  for (let i = 0; i < 3; i++) detail.add(cyl(0.09, 0.12, 0.13, 8), i % 2 ? JADE : WHITE, M(0.25, 1.47 + i * 0.068, 0.12));
+  c.addCyl(drinkX, drinkZ, drinkY, drinkY + 1.41, 0.52);
+  const crateX = drinkX - 0.34, crateZ = drinkZ + 1.09, crateY = heightAt(crateX, crateZ);
+  citrusCrate(b, detail, M(crateX, crateY, crateZ, -0.01));
+  c.addBox(crateX, crateY + 0.25, crateZ, 1.18, 0.50, 0.94, -0.01);
+}
+
+function tidePool(b: GeoBatch, detail: GeoBatch, c: Colliders): void {
+  b.setBase(M()); detail.setBase(M());
+  // 海側の切れ目から潮が入る。重石は砂に半分埋め、陸側から歩いて覗ける隙間を取る。
+  for (const [x, z, length, width, h, yaw] of [
+    [30.7, 134.7, 1.30, 0.77, 0.48, -0.58], [29.9, 136.5, 1.18, 0.85, 0.53, 0.52],
+    [31.6, 138.2, 1.36, 0.65, 0.43, 0.49], [33.5, 138.9, 0.72, 0.60, 0.34, 0.14],
+    [37, 137.7, 1.44, 0.81, 0.58, -0.64], [38.1, 135.9, 0.82, 0.70, 0.41, 0.82],
+    [36.2, 133.6, 1.51, 0.80, 0.54, 0.12], [33.3, 133.1, 1.09, 0.71, 0.47, -0.19],
+  ]) {
+    const y = heightAt(x, z);
+    b.add(new THREE.DodecahedronGeometry(1), 0x737d76, M(x, y + 0.06, z, yaw, length, h, width), { ao: 0.68, top: 0x999784 });
+    c.addCyl(x, z, y - 0.13, y + h * 0.87, width * 0.74);
+    for (let i = 0; i < 3; i++) detail.add(cyl(0.075, 0.13, 0.10, 6), 0xdcd3ad,
+      M(x + (i - 1) * 0.22, y + h * 0.83, z + Math.sin(i * 1.8) * 0.19));
+  }
+  // 岩の向こうに朱色の甲羅と左右の大きなはさみが覗く。ヒトデとは異なる輪郭にする。
+  for (const [x, z, yaw, size, lift] of [[33.38, 133.1, 2.63, 1.16, 0.50], [36.52, 135.02, -0.81, 0.81, 0.06]]) {
+    const crab = M(x, heightAt(x, z) + lift, z, yaw, size);
+    b.setBase(crab); detail.setBase(crab);
+    b.add(sph(1, 8, 4), 0xc8593d, M(0, 0.18, 0, 0, 0.29, 0.15, 0.23));
+    for (const side of [-1, 1]) {
+      b.add(sph(1, 6, 4), 0xe77342, M(side * 0.31, 0.25, 0.22, 0, 0.12, 0.12, 0.15));
+      b.add(cyl(0, 0.065, 0.16, 5), 0xf18a46, M(side * 0.35, 0.36, 0.25, 0, 1, 1, 1, 0, -side * 0.32));
+      b.add(cyl(0, 0.058, 0.12, 5), 0xf18a46, M(side * 0.25, 0.34, 0.28, 0, 1, 1, 1, 0, side * 0.31));
+      b.add(sph(0.038, 5, 3), DEEP_BLUE, M(side * 0.11, 0.31, 0.13));
+      for (let i = 0; i < 3; i++) {
+        const legs = i === 1 ? detail : b;
+        legs.add(box(0.31, 0.052, 0.055), 0xb34f37, M(side * 0.29, 0.095, -0.14 + i * 0.10, side * (i - 1) * 0.47));
+      }
+    }
+  }
+  const x = 37.5, z = 139.2, y = heightAt(x, z);
+  b.setBase(M(x, y, z)); detail.setBase(b.base);
+  b.add(box(0.20, 1.84, 0.15), WHITE, M(0, 0.68, 0));
+  for (let i = 0; i < 5; i++) b.add(box(0.21, 0.11, 0.16), DEEP_BLUE, M(0, 0.12 + i * 0.30, 0));
+  b.add(box(0.42, 0.10, 0.21), CORAL, M(0, 1.63, 0));
+  c.addCyl(x, z, y, y + 1.68, 0.11);
+}
+
 /** 遊泳区域の沖側に半円のブイを浮かべる。ロープの下は泳いで通れる。 */
 function swimCove(b: GeoBatch, detail: GeoBatch, c: Colliders): void {
   b.setBase(M());
@@ -191,5 +286,7 @@ export function buildSwimBeach(matte: GeoBatch, detail: GeoBatch, colliders: Col
   boards(matte, detail, colliders);
   deckChairs(matte, detail, colliders);
   watchHouse(matte, detail, colliders);
+  rentalStand(matte, detail, colliders);
+  tidePool(matte, detail, colliders);
   swimCove(matte, detail, colliders);
 }

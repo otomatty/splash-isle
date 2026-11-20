@@ -58,6 +58,15 @@ const result = await page.evaluate(async () => {
   check('水をかけ続けると入口がひらく', p0.state === 'open' && (g.save.portals & 1) === 1, `${out.washSec}秒`);
   waitPlay();
 
+  // 手動で進めるゲームの時計と切り離し、暗転・地区の取得・組み立ての完了まで待つ。
+  const waitForArea = async () => {
+    const deadline = performance.now() + 30000;
+    while (g.switching) {
+      if (performance.now() > deadline) throw new Error('エリアの読み込みが完了しませんでした');
+      await sleep(25);
+    }
+  };
+
   // ── 入口に飛びこむ → ステージ選択 ──
   const enter = async (idx, episode) => {
     const p = portals.list[idx];
@@ -68,11 +77,11 @@ const result = await page.evaluate(async () => {
     const btns = [...document.querySelectorAll('#epList button')];
     if (btns[episode].disabled) return 'locked';
     btns[episode].click();
-    await sleep(900);
+    await waitForArea();
     run(0.3);
     return g.stage && g.stage.episode === episode;
   };
-  const backToTown = async () => { await sleep(900); run(0.3); };
+  const backToTown = async () => { await waitForArea(); run(0.3); };
   // ステージの目標を達成してヒカリ石を取る
   const clear = async () => {
     const a = g.cur.area, m = a.missions[0];

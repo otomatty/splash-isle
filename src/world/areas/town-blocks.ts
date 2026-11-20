@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { buildBlockFacade, buildDoorstepSet } from './town-block-facade';
+import { buildAlleyLine, buildBlockFacade, buildDoorstepSet, buildUpperStorySet } from './town-block-facade';
+import { visitArtisanWindows } from './town-neighborhood';
 import type { Box, Colliders } from '../colliders';
 import { heightAt, pavedDistance, type PathDef, type TerrainDef } from '../terrain';
 
@@ -230,11 +231,123 @@ function findDoorstep(lot: Lot, owner: Box, colliders: Colliders): Doorstep | un
   return { x, z, y, yaw, side };
 }
 
+interface Frontage {
+  lot: Lot;
+  owner: Box;
+  parts: THREE.BufferGeometry[];
+}
+
+interface Hanging {
+  kind: number; family: number;
+  x: number; y: number; z: number;
+  yaw: number; width: number;
+}
+
+// 遠景用のレベルは空。初めて近づいた街区だけ形にし、以後は同じメッシュを出し入れする。
+class UpperStreetDetail extends THREE.LOD {
+  private near = new THREE.Group();
+  private makeMesh?: () => THREE.Mesh;
+
+  constructor(makeMesh: () => THREE.Mesh) {
+    super();
+    this.makeMesh = makeMesh;
+    const far = new THREE.Object3D();
+    far.visible = false;
+    this.addLevel(this.near, 0);
+    this.addLevel(far, 38, 0.14);
+  }
+
+  override update(camera: THREE.Camera): void {
+    super.update(camera);
+    if (this.near.visible && this.makeMesh) {
+      const mesh = this.makeMesh();
+      this.makeMesh = undefined;
+      this.near.add(mesh);
+      mesh.updateWorldMatrix(true, false);
+    }
+  }
+}
+
+function wallPoint(lot: Lot, x: number, z: number): Point {
+  const c = Math.cos(lot.yaw), s = Math.sin(lot.yaw);
+  return [lot.x + c * x + s * z, lot.z - s * x + c * z];
+}
+
+function addUpperStories(root: THREE.Group, material: THREE.Material, detailMeshes: THREE.Object3D[], frontages: Frontage[], colliders: Colliders): void {
+  const cells = new Map<string, Hanging[]>();
+  function place(kind: number, family: number, x: number, y: number, z: number, yaw: number, width = 1): void {
+    const cell = Math.floor(x / 28) + ',' + Math.floor(z / 28);
+    if (!cells.has(cell)) cells.set(cell, []);
+    cells.get(cell)!.push({ kind, family, x, y, z, yaw, width });
+  }
+
+  visitArtisanWindows(place);
+  const used = new Set<Lot>();
+  const choices = [[3, 0, 1], [0, 1, 3], [2, 2, 3]];
+  const floorY = ({ lot, owner }: Frontage) => owner.cy + owner.hy - lot.floors * 2.8 - 0.30;
+  for (const frontage of frontages) {
+    const { lot } = frontage;
+    const seed = Math.abs(Math.round(lot.x * 7) + Math.round(lot.z * 13));
+    if (seed % 11 >= [5, 7, 5][lot.style]) continue;
+    const kind = choices[lot.style][Math.floor(seed / 11) % 3];
+    const side = seed % 4 === 1 ? (seed % 3 ? -1 : 1) : 0;
+    const floor = lot.floors === 3 && seed % 3 === 1 ? 2 : 1;
+    const [x, z] = side ? wallPoint(lot, side * lot.w / 2, 0) : wallPoint(lot, 0, lot.d / 2);
+    place(kind, lot.family, x, floorY(frontage) + floor * 2.8 + 0.50, z, lot.yaw + side * Math.PI / 2);
+    used.add(lot);
+  }
+
+  // 同じ通りを向いた隣同士で、壁の間の細い路地だけに物干しを渡す。広い交差点は空ける。
+  for (let i = 1; i < frontages.length; i++) {
+    const prior = frontages[i - 1], next = frontages[i], a = prior.lot, b = next.lot;
+    if (used.has(a) || used.has(b) || Math.cos(a.yaw - b.yaw) < 0.997) continue;
+    const dx = b.x - a.x, dz = b.z - a.z, c = Math.cos(a.yaw), s = Math.sin(a.yaw);
+    const along = dx * c - dz * s, gap = Math.abs(along) - (a.w + b.w) / 2;
+    if (gap < 1.35 || gap > 4.85 || Math.abs(dx * s + dz * c) > 1.7 || Math.abs(floorY(prior) - floorY(next)) > 0.9) continue;
+    const side = Math.sign(along);
+    const [ax, az] = wallPoint(a, side * a.w / 2, a.d * 0.21);
+    const [bx, bz] = wallPoint(b, -side * b.w / 2, b.d * 0.21);
+    const x = (ax + bx) / 2, z = (az + bz) / 2, yaw = Math.atan2(az - bz, bx - ax);
+    // 真下に木箱や仕事台のある裏口を除き、布の下を人が両側からくぐれる路地を選ぶ。
+    const blocked = [-1.6, 0, 1.6].some(step => {
+      const px = x + Math.sin(yaw) * step, pz = z + Math.cos(yaw) * step;
+      return colliders.pointInside(px, heightAt(px, pz) + 0.92, pz, 0.46);
+    });
+    if (blocked) continue;
+    place(4, (a.family + b.family + i) % 3, x, (floorY(prior) + floorY(next)) / 2 + 4.9, z, yaw, Math.hypot(ax - bx, az - bz));
+    used.add(a);
+    used.add(b);
+  }
+
+  const models = new Map<number, THREE.BufferGeometry>();
+  for (const [cell, hangings] of cells) {
+    const [cx, cz] = cell.split(',').map(n => (Number(n) + 0.5) * 28);
+    const cy = hangings.reduce((sum, h) => sum + h.y, 0) / hangings.length;
+    const lod = new UpperStreetDetail(() => {
+      const transform = new THREE.Matrix4(), scale = new THREE.Vector3();
+      const parts = hangings.map(h => {
+        const key = h.kind * 3 + h.family;
+        if (!models.has(key)) models.set(key, h.kind === 4 ? buildAlleyLine(h.family) : buildUpperStorySet(h.kind, h.family));
+        transform.makeRotationY(h.yaw).scale(scale.set(h.width, 1, 1)).setPosition(h.x - cx, h.y - cy, h.z - cz);
+        return models.get(key)!.clone().applyMatrix4(transform);
+      });
+      const mesh = new THREE.Mesh(mergeGeometries(parts, false)!, material);
+      for (const part of parts) part.dispose();
+      mesh.receiveShadow = true;
+      return mesh;
+    });
+    lod.name = 'upper-street-' + cell;
+    lod.position.set(cx, cy, cz);
+    detailMeshes.push(lod);
+    root.add(lod);
+  }
+}
+
 /** 同じ意匠を使い回して区画ごとに統合。各建物の屋上を含めて1箱で歩行・着地を判定する。 */
-export function buildTownBlocks(root: THREE.Group, material: THREE.Material, colliders: Colliders, terrain: TerrainDef): void {
+export function buildTownBlocks(root: THREE.Group, material: THREE.Material, colliders: Colliders, terrain: TerrainDef, detailMeshes: THREE.Object3D[]): void {
   const prototypes = new Map<string, THREE.BufferGeometry>();
   const doorsteps = new Map<number, THREE.BufferGeometry>();
-  const frontages: { lot: Lot; owner: Box; parts: THREE.BufferGeometry[] }[] = [];
+  const frontages: Frontage[] = [];
   const cells = new Map<string, THREE.BufferGeometry[]>();
   const transform = new THREE.Matrix4(), scale = new THREE.Vector3();
   for (const lot of lotsInTown(colliders, terrain)) {
@@ -299,6 +412,7 @@ export function buildTownBlocks(root: THREE.Group, material: THREE.Material, col
     mesh.castShadow = mesh.receiveShadow = true;
     root.add(mesh);
   }
+  addUpperStories(root, material, detailMeshes, frontages, colliders);
   for (const facade of prototypes.values()) facade.dispose();
   for (const kit of doorsteps.values()) kit.dispose();
 }

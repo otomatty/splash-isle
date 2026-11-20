@@ -8,7 +8,7 @@ import { SKY_HORIZON, SUN_COLOR, SUN_DIR, applySkyLook, buildEnvironment, create
 import { Water } from './world/water';
 import type { Area, AreaKey, MissionDef, PortalDef } from './world/area';
 import { HILL, PLAZA, TOWN_TERRAIN, Town } from './world/areas/town';
-import { STAGE_INFO } from './world/areas/stages';
+import { STAGE_INFO, type StageKey } from './world/areas/stage-catalog';
 import { Particles } from './game/particles';
 import { Player } from './game/player';
 import { FollowCamera } from './game/camera';
@@ -21,7 +21,6 @@ import { ALL_GEMS, GEM_COUNT, formatTime, loadLocal, loadSettings, mergeSaves, n
 import { STANDALONE, api, type User } from './net/api';
 
 type Mode = 'title' | 'playing' | 'paused' | 'cutscene' | 'select' | 'ending';
-type StageKey = Exclude<AreaKey, 'town'>;
 
 const REVEAL_TEXT: Record<number, string> = {
   0: '広場がピカピカに！ 噴水の上に ヒカリ石が あらわれた！',
@@ -216,7 +215,7 @@ class Game {
   }
 
   /** 暗転をはさんで別のエリアへ移る。episode はステージ番号（町へ戻るときは不要） */
-  enterArea(key: AreaKey, episode = 0, then?: () => void): void {
+  async enterArea(key: AreaKey, episode = 0, then?: () => void): Promise<void> {
     if (this.switching) return;
     this.switching = true;
     this.flushSave(false);
@@ -228,62 +227,82 @@ class Game {
     fade.classList.remove('dark');
     fade.classList.add('on');
     this.audio.reveal();
-    window.setTimeout(() => {
-      const old = this.cur;
-      const from = this.stage?.key ?? null;
-      this.detach(old);
-      if (old !== this.town) {
-        old.area.dispose();
-        old.items.dispose();
-        old.enemies.dispose();
-        old.npcs.dispose();
-      }
-      if (key === 'town') {
-        this.terrain.apply(TOWN_TERRAIN);
-        this.stage = null;
-        this.attach(this.town);
-        this.applyTownState(false, false, false);
-        // 出てきた入口の前に立たせる
-        const p = this.tmp;
-        let yaw = Math.PI;
-        if (from && this.town.portals) {
-          yaw = this.town.portals.exitPoint(from, p);
-          this.town.portals.hold(from, 2.5);
-        } else p.copy(this.town.area.spawn);
-        this.player.teleport(p.x, p.y + 0.6, p.z, yaw);
-        this.cam.snap(p.x, p.y, p.z, yaw);
-      } else {
-        const info = STAGE_INFO[key];
-        this.terrain.apply(info.terrain);
-        const w = this.makeWorld(info.create(episode));
-        this.stage = { key, episode, revealed: false };
-        this.attach(w);
-        w.items.restore(this.save.shells, 0, () => false, (id) => !w.area.gems.find((g) => g.id === id)?.hidden);
-        w.enemies.spawnAll();
-        const sp = w.area.spawn;
-        this.player.teleport(sp.x, sp.y, sp.z, w.area.spawnYaw);
-        this.cam.snap(sp.x, sp.y, sp.z, w.area.spawnYaw + Math.PI);
-        this.player.tank = this.player.tankMax;
-        this.player.hp = this.player.maxHp;
-      }
-      this.player.invuln = 0;
-      this.player.frozen = false;
-      this.particles.update(100, this.cur.area.goop, this.cur.area.colliders); // 前のエリアの粒を消す
-      this.hud.setBubble(null, '', null, this.gfx.camera);
-      this.mode = prevMode === 'ending' || prevMode === 'title' ? prevMode : 'playing';
+    const fadeTime = new Promise<void>(resolve => window.setTimeout(resolve, 520));
+    // メニューと町だけで起動し、初めてしるしを通る暗転中に地区の造形を取得する。
+    const loadWorld = key === 'town' ? null : import('./world/areas/stages').then(({ STAGE_WORLDS }) => ({
+      key, ...STAGE_WORLDS[key],
+    }));
+    let destination;
+    try {
+      [destination] = await Promise.all([loadWorld, fadeTime]);
+    } catch {
       this.switching = false;
+      this.player.frozen = false;
+      this.mode = prevMode;
       this.last = performance.now();
       fade.classList.remove('on');
-      if (key !== 'town') {
-        const m = this.cur.area.missions[0];
-        this.hud.toast(`${this.cur.area.name}　ステージ${episode + 1}「${m.title}」`, 4);
+      if (key !== 'town' && this.cur === this.town && prevMode === 'playing') {
+        this.openEpisodes(key);
+        $('epBlurb').textContent = '地区を読み込めませんでした。通信を確かめて、続く場合はページを再読み込みしてください。';
       } else {
-        // 町へ戻ったとき、ヒカリ石が増えていれば あたらしい建物がスミに覆われる
-        const appeared = this.town.portals?.sync(bitCount(this.save.gems), this.save.portals) ?? [];
-        if (appeared.length && !then && this.mode === 'playing') this.announcePortal(appeared[0]);
+        this.hud.toast('地区を読み込めませんでした。ページを再読み込みしてください。', 5);
       }
-      then?.();
-    }, 520);
+      return;
+    }
+
+    const old = this.cur;
+    const from = this.stage?.key ?? null;
+    this.detach(old);
+    if (old !== this.town) {
+      old.area.dispose();
+      old.items.dispose();
+      old.enemies.dispose();
+      old.npcs.dispose();
+    }
+    if (!destination) {
+      this.terrain.apply(TOWN_TERRAIN);
+      this.stage = null;
+      this.attach(this.town);
+      this.applyTownState(false, false, false);
+      // 出てきた入口の前に立たせる
+      const p = this.tmp;
+      let yaw = Math.PI;
+      if (from && this.town.portals) {
+        yaw = this.town.portals.exitPoint(from, p);
+        this.town.portals.hold(from, 2.5);
+      } else p.copy(this.town.area.spawn);
+      this.player.teleport(p.x, p.y + 0.6, p.z, yaw);
+      this.cam.snap(p.x, p.y, p.z, yaw);
+    } else {
+      this.terrain.apply(destination.terrain);
+      const w = this.makeWorld(destination.create(episode));
+      this.stage = { key: destination.key, episode, revealed: false };
+      this.attach(w);
+      w.items.restore(this.save.shells, 0, () => false, (id) => !w.area.gems.find((g) => g.id === id)?.hidden);
+      w.enemies.spawnAll();
+      const sp = w.area.spawn;
+      this.player.teleport(sp.x, sp.y, sp.z, w.area.spawnYaw);
+      this.cam.snap(sp.x, sp.y, sp.z, w.area.spawnYaw + Math.PI);
+      this.player.tank = this.player.tankMax;
+      this.player.hp = this.player.maxHp;
+    }
+    this.player.invuln = 0;
+    this.player.frozen = false;
+    this.particles.update(100, this.cur.area.goop, this.cur.area.colliders); // 前のエリアの粒を消す
+    this.hud.setBubble(null, '', null, this.gfx.camera);
+    this.mode = prevMode === 'ending' || prevMode === 'title' ? prevMode : 'playing';
+    this.switching = false;
+    this.last = performance.now();
+    fade.classList.remove('on');
+    if (key !== 'town') {
+      const m = this.cur.area.missions[0];
+      this.hud.toast(`${this.cur.area.name}　ステージ${episode + 1}「${m.title}」`, 4);
+    } else {
+      // 町へ戻ったとき、ヒカリ石が増えていれば あたらしい建物がスミに覆われる
+      const appeared = this.town.portals?.sync(bitCount(this.save.gems), this.save.portals) ?? [];
+      if (appeared.length && !then && this.mode === 'playing') this.announcePortal(appeared[0]);
+    }
+    then?.();
   }
 
   // ───────────────────────── ゲーム内イベントの配線 ─────────────────────────
@@ -932,7 +951,7 @@ class Game {
       area.tick(t, dt, particles, playing ? player : null);
       particles.update(dt, area.goop, area.colliders);
       const b = player.body;
-      items.update(dt, t, b.x, b.y, b.z, playing);
+      items.update(dt, t, b.x, b.y, b.z, playing, gfx.camera.position);
       const speech = npcs.update(dt, t, b.x, b.y, b.z, gfx.camera.position);
       const entered = portals ? portals.update(dt, t, b.x, b.y, b.z, playing) : null;
 
@@ -994,7 +1013,7 @@ class Game {
       // 町をゆっくり見わたす
       const a = t * 0.06 + 0.6;
       this.cam.orbit(PLAZA.x, 9, PLAZA.z, 78 + Math.sin(t * 0.11) * 10, 30 + Math.sin(t * 0.07) * 6, a);
-      items.update(dt, t, 0, -100, 0, false);
+      items.update(dt, t, 0, -100, 0, false, gfx.camera.position);
       npcs.update(dt, t, 0, -100, 0, gfx.camera.position);
       enemies.update(dt, t, player, false);
       portals?.update(dt, t, 0, -100, 0, false);
@@ -1010,6 +1029,7 @@ class Game {
     const size = gfx.renderer.getDrawingBufferSize(_size);
     particles.sync(size.y / (2 * Math.tan((gfx.camera.fov * Math.PI) / 360)));
     this.terrain.updateDetail(gfx.camera.position);
+    area.updateVegetation(gfx.camera.position, gfx.tier !== 'low');
     gfx.render(rawDt, this.mode === 'playing');
 
     if (this.settings.showFps && this.mode !== 'title') {

@@ -358,3 +358,235 @@ export function buildDoorstepSet(style: number, family: number): THREE.BufferGeo
   }
   return build();
 }
+
+/** 二・三階の窓辺。Y=0が窓台、Z=0が壁面。下の通りから見える布裏や屋根の軒裏も作る。 */
+export function buildUpperStorySet(kind: number, family: number): THREE.BufferGeometry {
+  const { face, rect, build } = coloredGeometry();
+  const [linen, dye, trim] = [
+    [0xffe7b8, 0x507f87, 0xb76f59], [0xefdaba, 0xac635f, 0x637a65], [0xf7e5cb, 0x658369, 0x6b83a5],
+  ][family];
+  const bamboo = 0xb08d59, cord = 0x705b49;
+  function two(points: Point[], front: number, back = front): void {
+    face(points, front);
+    face([...points].reverse(), back, 0.86);
+  }
+  // 棚受けの斜材は左右の妻と下面まで張り、窓の上の壁から水平な竿までを支える。
+  function bracket(x: number, y: number, depth: number): void {
+    const l = x - 0.047, r = x + 0.047;
+    face([[r,y-0.34,0],[r,y,0],[r,y,depth]], OAK);
+    face([[l,y,depth],[l,y,0],[l,y-0.34,0]], OAK);
+    face([[l,y,depth],[r,y,depth],[r,y,0],[l,y,0]], bamboo);
+    face([[l,y-0.34,0],[r,y-0.34,0],[r,y,depth],[l,y,depth]], OAK);
+    rect(x, y - 0.15, 0.014, 0.19, 0.44, cord);
+  }
+  function roller(x: number, y: number, z: number, w: number, r: number, color: number, ends = color): void {
+    const ring = Array.from({ length: 6 }, (_, i) => [y + r * Math.cos(i * Math.PI / 3), z + r * Math.sin(i * Math.PI / 3)]);
+    for (let i = 0; i < ring.length; i++) {
+      const [y0, z0] = ring[i], [y1, z1] = ring[(i + 1) % ring.length];
+      face([[x-w/2,y0,z0],[x-w/2,y1,z1],[x+w/2,y1,z1],[x+w/2,y0,z0]], color, 0.88);
+    }
+    face(ring.map(([py,pz]): Point => [x+w/2,py,pz]), ends);
+    face(ring.map(([py,pz]): Point => [x-w/2,py,pz]).reverse(), ends);
+  }
+
+  const top = 1.54, railZ = 0.565;
+  for (const x of [-1.83, 1.83]) bracket(x, top, railZ);
+  roller(0, top, railZ, 3.96, 0.045, kind === 2 ? OAK : bamboo, cord);
+
+  if (kind === 0) {
+    // 干したキルトは角で吊り、中が重みで落ちる。縦の折り目に合わせて継ぎ布と裾を曲げる。
+    const quilt = (cx: number, width: number, drop: number, small: boolean): void => {
+      const point = (u: number, v: number): Point => {
+        const sag = 4 * u * (1 - u);
+        const wave = Math.cos(u * 4 * Math.PI);
+        return [cx + (u - 0.5) * width, top - v * drop - sag * 0.11,
+          railZ + 0.047 + v * (0.12 + wave * 0.078)];
+      };
+      const cols = small ? 2 : 4;
+      const rows = [0, 0.12, 0.48, 0.81, 0.92, 1];
+      for (let i = 0; i < cols; i++) {
+        const u = i / cols, next = (i + 1) / cols;
+        for (let j = 0; j + 1 < rows.length; j++) {
+          const topY = rows[j], lowY = rows[j + 1];
+          const color = small ? (j === 3 ? dye : linen) :
+            j === 0 || j === 4 ? dye : j === 3 ? linen : [linen, trim, dye, linen][(i + j + family) % 4];
+          face([point(u,lowY),point(next,lowY),point(next,topY),point(u,topY)], color, 0.92);
+        }
+        face([point(u,0),point(next,0),point(next,1),point(u,1)], small ? linen : dye);
+      }
+      for (const u of [0.05, 0.95]) {
+        const [x, y, z] = point(u, 0);
+        two([[x-0.045,y-0.105,z+0.022],[x+0.032,y-0.105,z+0.022],
+          [x+0.061,y+0.092,z-0.016],[x-0.015,y+0.092,z-0.016]], bamboo);
+      }
+    };
+    quilt(-0.68, 2.04, 1.15, false);
+    quilt(1.10, 0.86, 0.85, true);
+  } else if (kind === 1) {
+    // 竹の小庇の軒裏に、葉の色と茎の長さの違う薬草の束を乾かす。
+    const width = 4.02, depth = 0.79, canopyY = top + 0.07;
+    for (const x of [-1.83, 1.83]) {
+      two([[x,top,railZ],[x,canopyY+0.25,0],[x,canopyY,depth]], OAK);
+    }
+    for (let i = 0; i < 5; i++) {
+      const x = -width / 2 + i * width / 5, nx = x + width / 5 - 0.015;
+      two([[x,canopyY,depth],[nx,canopyY,depth],[nx,canopyY+0.25,0],[x,canopyY+0.25,0]],
+        i % 2 ? 0xc3a575 : bamboo, 0x9b7956);
+    }
+    const greens = [0x648461,0x879359,0x527c64,0x809d75];
+    for (let i = 0; i < 4; i++) {
+      const x = -1.35 + i * 0.88, y = 1.25 - (i % 2) * 0.15, z = railZ;
+      rect(x, (y + top) / 2, z+0.012, 0.035, top-y, cord);
+      for (let stem = -1; stem <= 1; stem++) {
+        const tip = x + stem * 0.30, end = y - 0.58 - (stem === 0 ? 0.14 : 0);
+        const base: Point = [x,y,z], blade: Point = [tip,end,z+0.11];
+        const middle: Point = [(tip+x)/2,(end+y)/2,z+0.23];
+        face([base, [middle[0]-0.12,middle[1],z+0.09], blade, middle], greens[(i+family)%4], 0.78);
+        face([base, middle, blade, [middle[0]+0.12,middle[1],z+0.09]], greens[(i+family+1)%4]);
+      }
+      rect(x, y-0.06, z+0.070, 0.14, 0.065, bamboo);
+      if (i === 0 || i === 3) two([[x+0.07,y-0.25,z+0.12],[x+0.24,y-0.22,z+0.12],
+        [x+0.21,y-0.04,z+0.07],[x+0.04,y-0.07,z+0.07]], linen);
+    }
+  } else if (kind === 2) {
+    // カーブを付けて帆布を裁ち、斜めの継ぎ目に縫いを入れる。裾は棒に巻いたまま繕う。
+    const head: Point = [-1.56,top,railZ+0.032], foot: Point = [-1.58,0.35,0.71], clew: Point = [0.78,0.35,0.71];
+    const belly: Point = [-0.56,0.77,0.79];
+    two([foot,clew,belly], linen);
+    two([foot,belly,head], 0xf2d6aa);
+    two([head,belly,clew], linen);
+    two([[-1.57,1.24,0.649],[-1.06,1.26,0.646],[-1.56,top+0.005,railZ+0.041]], dye);
+    for (let i = 0; i < 5; i++) {
+      const t = i * 0.16 + 0.10, x = foot[0] + (belly[0]-foot[0]) * t, y = 0.35 + 0.42*t, z = 0.73 + 0.08*t;
+      face([[x,y,z],[x+0.10,y+0.037,z+0.006],[x+0.10,y+0.059,z+0.006],[x,y+0.022,z]], OAK);
+    }
+    roller(-0.39,0.32,0.70,2.58,0.12,0xd4b787,cord);
+    for (let i = 0; i < 2; i++) {
+      const x = 1.02 + i*0.56, y = i ? 0.81 : 1.0;
+      rect(x, (top+y)/2, railZ, 0.038, top-y, cord);
+      roller(x,y,railZ,0.37,0.15,i ? trim : dye,bamboo);
+      rect(x,y,railZ+0.144,0.075,0.13,linen);
+    }
+  } else {
+    // 半分巻き上げた葦すだれ。脇に吊るした陶の魚から、風を受ける短冊が下がる。
+    const mid = -0.42, width = 2.43;
+    for (let i = 0; i < 6; i++) {
+      const y = top - 0.085 - i*0.12, z = railZ + i*0.015;
+      two([[mid-width/2,y-0.09,z+0.025],[mid+width/2,y-0.09,z+0.025],
+        [mid+width/2,y,z],[mid-width/2,y,z]], i%2 ? 0xc5a36c : bamboo);
+    }
+    for (const x of [mid-0.81,mid+0.81]) {
+      two([[x-0.023,top-0.80,0.704],[x+0.023,top-0.80,0.704],
+        [x+0.023,top-0.04,railZ+0.025],[x-0.023,top-0.04,railZ+0.025]],cord);
+    }
+    roller(mid,top-0.84,0.68,width+0.09,0.115,bamboo,cord);
+    const fx = 1.36, fy = 0.92;
+    rect(fx,(top+fy+0.20)/2,railZ,0.035,top-fy-0.20,cord);
+    const outline: Point[] = [[fx-0.36,fy,railZ],[fx-0.14,fy-0.17,railZ],[fx+0.17,fy-0.15,railZ],
+      [fx+0.28,fy,railZ],[fx+0.12,fy+0.15,railZ],[fx-0.12,fy+0.18,railZ]];
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i], b = outline[(i+1)%outline.length];
+      face([a,b,[fx,fy,railZ+0.115]],i === 1 ? linen : dye);
+      face([b,a,[fx,fy,railZ-0.115]],dye);
+    }
+    two([[fx+0.18,fy,railZ],[fx+0.48,fy-0.16,railZ],[fx+0.45,fy+0.17,railZ]],trim);
+    rect(fx-0.17,fy+0.04,railZ+0.081,0.063,0.063,SHADE);
+    rect(fx,(fy-0.18+0.48)/2,railZ,0.028,fy-0.18-0.48,cord);
+    two([[fx+0.09,0.22,railZ+0.075],[fx+0.24,0.25,railZ+0.075],
+      [fx+0.06,0.50,railZ],[fx-0.07,0.48,railZ]],linen);
+  }
+  return build();
+}
+
+/** 路地を渡る物干し。Xの両端を隣り合う壁に合わせて伸ばし、布の丈と縄のたるみは実寸に保つ。 */
+export function buildAlleyLine(family: number): THREE.BufferGeometry {
+  const { face, build } = coloredGeometry();
+  const natural = 0xf0d8aa, indigo = 0x497787, madder = 0xb57062, straw = 0xc69c63;
+  const sag = (x: number) => -0.18 * (1 - 4*x*x);
+  function both(points: Point[], front: number, back = front): void {
+    face(points, front, 0.88);
+    face([...points].reverse(), back, 0.88);
+  }
+
+  // 断面も付けて、真下から覗いたときにも両方の壁まで一本につながる。
+  function ropeRing(x: number): Point[] {
+    const y = sag(x);
+    return [[x,y+0.017,0],[x,y-0.011,0.016],[x,y-0.011,-0.016]];
+  }
+  let previous = ropeRing(-0.5);
+  for (const x of [-0.25, 0, 0.25, 0.5]) {
+    const ring = ropeRing(x);
+    for (let i = 0; i < ring.length; i++) {
+      const next = (i+1)%ring.length;
+      face([previous[i],previous[next],ring[next],ring[i]], 0x99794f);
+    }
+    previous = ring;
+  }
+
+  function pin(x: number): void {
+    const y = sag(x);
+    both([[x-0.008,y-0.068,0.043],[x+0.011,y-0.068,0.043],
+      [x+0.014,y+0.045,0.002],[x-0.006,y+0.045,0.002]], straw);
+  }
+  function towel(cx: number, w: number, drop: number, colors: number[], cols: number): void {
+    const point = (u: number, v: number): Point => {
+      const x = cx + (u-0.5)*w;
+      return [x+v*0.008, sag(x)-v*drop, 0.026+v*(0.09+0.043*Math.cos(2*Math.PI*u))];
+    };
+    const rows = [0, 0.64, 0.81, 1];
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < 3; j++) {
+        const u = i/cols, next = (i+1)/cols;
+        both([point(u,rows[j+1]),point(next,rows[j+1]),point(next,rows[j]),point(u,rows[j])], colors[j]);
+      }
+    }
+    pin(cx-w*0.41); pin(cx+w*0.41);
+  }
+
+  if (family === 0) {
+    // 胸当てと腰の間で絞り、裾で開く仕事着。胸紐は縄に掛けた位置から肩へつなぐ。
+    for (const x of [-0.075, 0.075]) {
+      both([[x-0.015,-0.39,0.055],[x+0.015,-0.39,0.055],
+        [x+0.025,sag(x),0.026],[x-0.003,sag(x),0.026]], madder);
+      pin(x);
+    }
+    both([[-0.13,-0.56,0.070],[0.13,-0.56,0.070],[0.09,-0.34,0.047],[-0.09,-0.34,0.047]], indigo);
+    for (const [x0,x1,z0,z1] of [[-0.19,0,0.089,0.145],[0,0.19,0.145,0.105]]) {
+      both([[x0,-1.06,z0],[x1,-1.06,z1],[x1*0.67,-0.56,0.070],[x0*0.67,-0.56,0.070]], indigo);
+      both([[x0,-1.06,z0+0.003],[x1,-1.06,z1+0.003],
+        [x1*0.97,-1.02,z1*0.93+0.01],[x0*0.97,-1.02,z0*0.93+0.01]], madder);
+    }
+    face([[-0.073,-0.75,0.118],[0.055,-0.76,0.118],[0.082,-0.64,0.103],[-0.081,-0.64,0.103]], natural);
+    towel(0.31,0.16,0.43,[natural,madder,natural],1);
+  } else if (family === 1) {
+    towel(-0.21,0.33,0.86,[natural,indigo,natural],3);
+    towel(0.18,0.25,0.58,[madder,natural,madder],2);
+  } else {
+    // 水を切る編み籠。奥を暗く落とした口とふくらんだ胴に、色違いの籐を一段巻く。
+    const cx = 0.12;
+    function basketRing(y: number, rx: number, rz: number): Point[] {
+      return Array.from({ length: 6 }, (_, i) => {
+        const angle = i*Math.PI/3;
+        return [cx+rx*Math.sin(angle),y,rz*Math.cos(angle)];
+      });
+    }
+    let ring = basketRing(-1.04,0.12,0.092);
+    for (const [y,rx,rz,col] of [[-0.87,0.17,0.15,0xb18a57],[-0.81,0.17,0.15,0x866944],
+      [-0.62,0.13,0.12,straw],[-0.66,0.10,0.092,0x89633e]]) {
+      const next = basketRing(y,rx,rz);
+      for (let i = 0; i < 6; i++) {
+        const j = (i+1)%6;
+        face([ring[i],ring[j],next[j],next[i]],col,0.78);
+      }
+      ring = next;
+    }
+    face(ring,0x634e38);
+    for (const s of [-1, 1]) {
+      const x = cx+s*0.122;
+      both([[x-0.009,-0.64,0.014],[x+0.009,-0.64,0.014],
+        [cx+0.009,sag(cx),0.024],[cx-0.009,sag(cx),0.024]],0x8e7149);
+    }
+    towel(-0.22,0.21,0.46,[indigo,natural,indigo],1);
+  }
+  return build();
+}
