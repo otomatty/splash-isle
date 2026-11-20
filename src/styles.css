@@ -250,3 +250,23 @@ kbd { display: inline-block; font: 900 12px var(--font); background: #fff; borde
 @media (prefers-reduced-motion: reduce) {
   .logo h1 span, .logo h1 i, .drop { animation: none; }
 }
+
+.restart-dialog {
+  width: min(30rem, 90vw);
+  padding: 1.7rem;
+  color: #163f43;
+  background: #fff5d9;
+  border: 2px solid #996f3d;
+  border-radius: 1.3rem;
+  text-align: center;
+  box-shadow: 0 .5rem 2rem #12373555;
+}
+.restart-dialog::backdrop { background: #0a3039ad; }
+.restart-dialog h2 { margin: 0; font-size: 1.3rem; }
+.restart-dialog p { margin: 1rem 0 1.4rem; }
+.restart-dialog button, #retrySaves {
+  font: inherit; font-weight: bold; color: #164a4c; background: #fff9e8;
+  border: 1px solid #9c8c66; border-radius: 2rem; padding: .5em 1em; cursor: pointer;
+}
+.restart-dialog button + button { margin-left: .6rem; background: #126864; color: #fff; }
+#retrySaves { font-size: .9em; padding: .2em .7em; }

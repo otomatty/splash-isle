@@ -1,3 +1,6 @@
+export const SLOT_IDS = ['A', 'B', 'C'] as const;
+export type SaveSlot = typeof SLOT_IDS[number];
+
 /** セーブデータ（localStorage とクラウドで同じ形） */
 export interface SaveData {
   v: 1;
@@ -15,6 +18,10 @@ export interface SaveData {
   playMs: number;
   /** 全クリアの最短時間（ミリ秒）。未クリアは null */
   bestMs: number | null;
+  /** 船の導入を見終えて町に着いたか。持ち物が空のままでも続きを選べる。 */
+  introComplete: boolean;
+  /** このファイルを明示的に最初からやり直した時刻。旧セーブと最初の冒険は 0。 */
+  resetAt: number;
   updatedAt: number;
 }
 
@@ -28,7 +35,19 @@ const KEY = 'splash-isle-save-v1';
 const SETTINGS_KEY = 'splash-isle-settings-v1';
 
 export function newSave(bestMs: number | null = null): SaveData {
-  return { v: 1, gems: 0, revealed: INITIAL_REVEALED, shells: [], stars: 0, portals: 0, playMs: 0, bestMs, updatedAt: Date.now() };
+  return { v: 1, gems: 0, revealed: INITIAL_REVEALED, shells: [], stars: 0, portals: 0, playMs: 0, bestMs, introComplete: false, resetAt: 0, updatedAt: Date.now() };
+}
+
+export function restartSave(previous: SaveData): SaveData {
+  const next = newSave(previous.bestMs);
+  next.resetAt = Math.max(next.updatedAt, previous.resetAt + 1);
+  next.updatedAt = next.resetAt;
+  return next;
+}
+
+export function hasAdventure(save: SaveData): boolean {
+  return save.introComplete || save.gems !== 0 || save.shells.length > 0 || save.stars !== 0 ||
+    save.portals !== 0 || save.revealed !== INITIAL_REVEALED || save.playMs > 0;
 }
 
 /** 外から来たデータを安全な形に整える（壊れた値は捨てる） */
@@ -39,7 +58,7 @@ export function sanitizeSave(raw: unknown): SaveData | null {
   const int = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : 0);
   const shells = Array.isArray(r.shells) ? Array.from(new Set(r.shells.filter((n): n is number => Number.isInteger(n) && n >= 0 && n < 256))).slice(0, 256) : [];
   const best = typeof r.bestMs === 'number' && Number.isFinite(r.bestMs) && r.bestMs > 0 ? Math.floor(r.bestMs) : null;
-  return {
+  const save: SaveData = {
     v: 1,
     gems: int(r.gems, ALL_GEMS),
     revealed: (int(r.revealed, ALL_GEMS) & 31) | INITIAL_REVEALED,
@@ -48,13 +67,23 @@ export function sanitizeSave(raw: unknown): SaveData | null {
     portals: int(r.portals, 7),
     playMs: int(r.playMs, 1000 * 60 * 60 * 100),
     bestMs: best,
+    introComplete: r.introComplete === true,
+    resetAt: int(r.resetAt, Number.MAX_SAFE_INTEGER),
     updatedAt: int(r.updatedAt, Number.MAX_SAFE_INTEGER),
   };
+  if (r.introComplete === undefined) save.introComplete = hasAdventure(save) || best !== null;
+  return save;
 }
 
-export function loadLocal(): SaveData {
+// A は従来と同じキーを使い、既存のゲストの冒険もそのまま表示する。
+function localKey(slot: SaveSlot, owner?: string): string {
+  const base = slot === 'A' ? KEY : KEY + '-' + slot;
+  return owner === undefined ? base : base + ':account:' + encodeURIComponent(owner);
+}
+
+export function loadLocal(slot: SaveSlot = 'A', owner?: string): SaveData {
   try {
-    const s = localStorage.getItem(KEY);
+    const s = localStorage.getItem(localKey(slot, owner));
     if (s) return sanitizeSave(JSON.parse(s)) ?? newSave();
   } catch {
     /* プライベートモードなどで保存領域が使えない場合はメモリ上だけで進める */
@@ -62,9 +91,9 @@ export function loadLocal(): SaveData {
   return newSave();
 }
 
-export function saveLocal(data: SaveData): void {
+export function saveLocal(data: SaveData, slot: SaveSlot = 'A', owner?: string): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(data));
+    localStorage.setItem(localKey(slot, owner), JSON.stringify(data));
   } catch {
     /* 保存できない環境では何もしない */
   }
@@ -75,9 +104,17 @@ export function mergeSaves(a: SaveData, b: SaveData): SaveData {
   const count = (n: number) => n.toString(2).replace(/0/g, '').length;
   const pa = count(a.gems) * 1000 + count(a.stars) * 10 + a.shells.length;
   const pb = count(b.gems) * 1000 + count(b.stars) * 10 + b.shells.length;
-  const base = pb > pa || (pb === pa && b.updatedAt > a.updatedAt) ? b : a;
   const bests = [a.bestMs, b.bestMs].filter((x): x is number => x !== null);
-  return { ...base, shells: [...base.shells], portals: a.portals | b.portals, bestMs: bests.length ? Math.min(...bests) : null };
+  const bestMs = bests.length ? Math.min(...bests) : null;
+  if (a.resetAt !== b.resetAt) {
+    const newer = a.resetAt > b.resetAt ? a : b;
+    return { ...newer, shells: [...newer.shells], bestMs };
+  }
+  // 読み込み時に作った空のファイルは、導入を見終えたばかりの古い日付の冒険を追い越さない。
+  const playedA = hasAdventure(a), playedB = hasAdventure(b);
+  const preferB = playedA !== playedB ? playedB : pb > pa || (pb === pa && b.updatedAt > a.updatedAt);
+  const base = preferB ? b : a;
+  return { ...base, shells: [...base.shells], introComplete: a.introComplete || b.introComplete, portals: a.portals | b.portals, bestMs };
 }
 
 export interface Settings {

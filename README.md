@@ -7,9 +7,13 @@
 - 描画: Three.js（WebGL2）。HDR レンダリング、ソフトシャドウ、MSAA、ブルーム、海面のリアルタイム反射
 - アセット: 地形・建物・キャラクター・海・空・効果音・BGM まで **すべてコードで生成**（画像・モデル・音声ファイルなし）
 - インフラ: Cloudflare Workers（静的配信 + API）と D1（セーブ・ランキング・セッション）
-- 認証: Google ログイン（OAuth 2.0 認可コードフロー + PKCE / OpenID Connect）。ログインなしでもゲストで遊べます
+- 認証: Google ログイン（OAuth 2.0 認可コードフロー + PKCE / OpenID Connect）。1ファイル版・API未接続・OAuth未設定のローカル環境はゲストで遊べます
 
 ## 遊びかた
+
+Googleでログインすると、砂浜に貝がら・灯台・帆船が並ぶファイル選択画面が開きます。A・B・Cから冒険の記録を選べます。空きファイルではプカの船旅を描いた3ページのプロローグが始まり、最後の「島へ上陸する」で3Dの町に入ります。途中でファイル選択へ戻ることもできます。
+
+以前のセーブはファイルAの「つづきから」で再開できます。ログイン中の記録はアカウントごとに、ゲストの記録はこのブラウザに保存されます。
 
 | 操作 | キーボード＋マウス | ゲームパッド | タッチ |
 |---|---|---|---|
@@ -100,7 +104,7 @@ npm run preview            # ビルドして http://localhost:8787 で起動
    ```
 
    `wrangler.jsonc` で `GOOGLE_CLIENT_SECRET` を必須にしているため、初回はシークレットを一緒に送らないとデプロイが止まります。
-   2 回目以降は `npm run deploy` だけで済みます。シークレットを入れ替えるときは `npx wrangler secret put GOOGLE_CLIENT_SECRET` を使います。
+   2 回目以降も、新しいマイグレーションがある場合は `npm run db:migrate` を適用してから `npm run deploy` を実行します。冒険ファイルB・Cは `0002_save_slots.sql` を使用します。シークレットを入れ替えるときは `npx wrangler secret put GOOGLE_CLIENT_SECRET` を使います。
 
    独自ドメインを使う場合は `wrangler.jsonc` に `routes`（`custom_domain: true`）を追加し、手順 3 のリダイレクト URI も合わせます。
 
@@ -120,14 +124,16 @@ npm run preview            # ビルドして http://localhost:8787 で起動
 
 - 軽さのための工夫: 建物や小物は頂点カラーで数個のメッシュに統合、植物はインスタンシング、パーティクルは 1 ドローコール、
   水深は深度バッファを読まずに地形の高さテクスチャから計算、当たり判定は自前の軽量実装（物理エンジンなし）。
-  転送量は JS 約 220KB（gzip）のみで、画像・モデル・音声のダウンロードはありません。
+  通常版はログイン・ファイル選択・プロローグを2Dで表示し、最初の上陸または再開の操作でThree.jsと町を読み込みます。
 
 ## プロジェクト構成
 
 ```
 index.html            画面（HUD・メニュー）
 src/
-  main.ts             起動、ゲーム進行、メインループ
+  main.ts             ログイン、ファイル選択、上陸と再開
+  front/              絵物語、共通メニュー
+  gameplay.ts         3Dゲーム進行、メインループ
   styles.css          UI のスタイル
   engine/             renderer（品質・動的解像度）, input, audio（効果音と BGM の合成）, noise
   world/              terrain（地形の差し替えとシェーダー）, water, sky, props, goop（スミ）, colliders
@@ -147,7 +153,8 @@ scripts/              開発用の自動テスト
 ```bash
 npm run test:worker     # API と Google ログインの結合テスト（Google のエンドポイントだけ偽物に差し替え）
 
-npm run build && npx vite preview --port 4173 &   # 以下の 2 つは Chrome が必要（CHROME=/path/to/chrome で指定可）
+npm run build && npx vite preview --port 4173 &   # 以下のブラウザテストは Chrome が必要（CHROME=/path/to/chrome で指定可）
+npm run test:menu       # ログイン・ファイル選択・プロローグと上陸の検証
 npm run test:game       # 入口を開ける → ステージ選択 → クリアで町へ戻る、を全14個ぶん通すテスト
 npm run test:reach      # 全エリアの足場・間欠泉・橋が実際に通れるかの検証
 ```

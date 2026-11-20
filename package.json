@@ -16,6 +16,7 @@
     "deploy": "npm run build && wrangler deploy",
     "deploy:first": "npm run build && wrangler deploy --secrets-file .secrets.env",
     "test:worker": "node scripts/test-worker.mjs",
+    "test:menu": "node scripts/test-menu.mjs",
     "test:game": "node scripts/test.mjs",
     "test:reach": "node scripts/reach.mjs"
   },

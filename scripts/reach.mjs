@@ -1,16 +1,18 @@
 // 開発用: ジャンプ＋ホバーで届く範囲（到達曲線）を実測し、全エリアの足場・間欠泉・橋が実際に通れるかを検証する
 import puppeteer from 'puppeteer-core';
+import { startGuestGame, useOfflineGuest } from './play-guest.mjs';
+const url = new URL(process.argv[2] ?? 'http://localhost:4173/');
+url.searchParams.set('debug', '');
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome', headless: true, protocolTimeout: 600000, args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--mute-audio'] });
 const page = await browser.newPage();
 await page.setViewport({ width: 960, height: 540 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
-await page.goto(process.argv[2] ?? 'http://localhost:4173/?debug', { waitUntil: 'load' });
-await page.waitForFunction(() => document.getElementById('loading')?.classList.contains('hidden'), { timeout: 120000 });
+await useOfflineGuest(page);
+await page.goto(url.href, { waitUntil: 'load' });
+await startGuestGame(page);
 const r = await page.evaluate(async () => {
-  const g = window.__splash; localStorage.clear();
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  document.getElementById('btnPlay').click(); await sleep(1200);
+  const g = window.__splash;
   window.requestAnimationFrame = () => 0; g.gfx.render = () => {};
   let now = performance.now() + 100000;
   const key = (c, d = true) => window.dispatchEvent(new KeyboardEvent(d ? 'keydown' : 'keyup', { code: c }));
