@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GeoBatch, M, box, cone, cyl, sph } from '../world/props';
 import { damp } from '../engine/noise';
 
@@ -21,6 +22,7 @@ export interface Bird {
   legL: THREE.Group;
   legR: THREE.Group;
   tail: THREE.Group;
+  pumpDetail?: { geometry: THREE.BufferGeometry; plainCount: number };
   /** 伸び縮み（スカッシュ＆ストレッチ）のばね */
   squash: number;
   squashV: number;
@@ -40,6 +42,90 @@ export interface BirdPose {
 
 const matBird = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0 });
 const matEye = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.08 });
+
+const matGlint = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const straw = new THREE.Color(0xe8c477);
+const strawEdge = new THREE.Color(0xc79353);
+const lowerBill = new THREE.Color(0xc75f30);
+
+function turned(profile: [number, number][], segments: number): THREE.LatheGeometry {
+  return new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), segments);
+}
+
+/** 球の緯線を胸元と顔の模様に沿わせ、少ない頂点でも色の境目をなめらかに保つ。 */
+function addPlumage(batch: GeoBatch, look: BirdLook, part: 'body' | 'face', width: number, height: number): void {
+  const body = part === 'body';
+  const radius = body ? 0.36 : 0.275;
+  const geometry = sph(radius, width, height).rotateX(Math.PI / 2);
+  const pos = geometry.getAttribute('position'), normals = geometry.getAttribute('normal');
+  const edgeRow = Math.round(height * 0.3);
+  // 正面から白い模様の端までの角度。顔には上のくぼみを、胸には下の丸みを付ける。
+  const edgeAngle = (up: number): number => body
+    ? 0.88 + 0.24 * up * up - 0.2 * up
+    : 1.1 - 0.28 * up * up - 0.08 * up - 0.20 * Math.max(0, up) ** 8;
+  for (let i = 0; i < pos.count; i++) {
+    const row = Math.floor(i / (width + 1));
+    if (row === 0 || row === height) continue;
+    const length = Math.hypot(pos.getX(i), pos.getY(i));
+    const dx = pos.getX(i) / length, dy = pos.getY(i) / length;
+    const edge = edgeAngle(dy);
+    // 境界の両側に1周ずつ頂点をそろえる。
+    const theta = row <= edgeRow
+      ? (edge - 0.012) * row / edgeRow
+      : edge + 0.012 + (Math.PI - edge - 0.012) * (row - edgeRow - 1) / (height - edgeRow - 1);
+    const x = dx * Math.sin(theta), y = dy * Math.sin(theta), z = Math.cos(theta);
+    pos.setXYZ(i, radius * x, radius * y, radius * z);
+    normals.setXYZ(i, x, y, z);
+  }
+  const plumage = new THREE.Color(body ? look.belly : 0xfdfaf2);
+  batch.add(geometry, look.body, body ? M(0, 0, 0, 0, 1, 1.1, 0.94) : undefined, {
+    ao: body ? 0.8 : 1,
+    paint: (x, y, z, color) => {
+      const length = Math.hypot(x, y);
+      if (z > 0 && (length < 1e-6 || z > radius * Math.cos(edgeAngle(y / length)))) color.copy(plumage);
+    },
+  });
+}
+
+/** ゆるく反ったつばと丸い山を一枚の麦わら帽子にする。帯も同じ頂点色で染める。 */
+function addHat(batch: GeoBatch, band: number, segments: number): void {
+  const geometry = turned([
+    [0, -0.025], [0.22, -0.025], [0.35, -0.042], [0.385, -0.025], [0.38, -0.009],
+    [0.34, -0.012], [0.217, 0.019], [0.207, 0.031], [0.204, 0.044], [0.198, 0.091],
+    [0.195, 0.102], [0.183, 0.15], [0.157, 0.18], [0.105, 0.193], [0, 0.194],
+  ], segments);
+  const pos = geometry.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    const rim = Math.max(0, Math.hypot(x, z) - 0.217);
+    pos.setY(i, pos.getY(i) + rim * (x * x - z * z) * 1.1);
+  }
+  geometry.computeVertexNormals();
+  const ribbon = new THREE.Color(band);
+  batch.add(geometry, straw, M(0, 0.2, -0.02, 0, 1, 1, 1, -0.16), {
+    paint: (x, y, z, color) => {
+      if (y >= 0.043 && y <= 0.092) color.copy(ribbon);
+      else if (y < -0.02 && Math.hypot(x, z) > 0.29) color.copy(strawEdge);
+    },
+  });
+}
+
+/** 羽色に馴染む根元から先が少し下がった二色のくちばし。 */
+function addBill(batch: GeoBatch, segments: number): void {
+  const geometry = turned([[0, 0], [0.092, 0], [0.102, 0.035], [0.085, 0.105], [0.049, 0.172], [0.015, 0.22], [0, 0.232]], segments);
+  geometry.rotateX(Math.PI / 2);
+  const pos = geometry.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    pos.setY(i, pos.getY(i) * 0.66 - 0.48 * z * z);
+  }
+  geometry.computeVertexNormals();
+  batch.add(geometry, 0xffb540, M(0, -0.052, 0.215), {
+    paint: (_x, y, z, color) => {
+      if (y + 0.48 * z * z < -0.014) color.copy(lowerBill);
+    },
+  });
+}
 
 function mesh(batch: GeoBatch, mat: THREE.Material = matBird): THREE.Mesh {
   const m = new THREE.Mesh(batch.build(), mat);
@@ -61,15 +147,7 @@ export function buildBird(look: BirdLook): Bird {
   const ORANGE = 0xf2792b;
   // 胴体
   const tb = new GeoBatch();
-  const belly = new THREE.Color(look.belly);
-  // おなかの白い模様は別パーツを重ねず、胴体の頂点色で塗り分ける（重なりのギザギザを出さない）
-  tb.add(sph(0.36, 40, 28), look.body, M(0, 0, 0, 0, 1, 1.1, 0.94), {
-    ao: 0.8,
-    paint: (x, y, z, out) => {
-      const e = (x / 0.25) ** 2 + ((y + 0.06) / 0.3) ** 2;
-      if (z > 0 && e < 1) out.copy(belly);
-    },
-  });
+  addPlumage(tb, look, 'body', 32, 20);
   tb.add(cone(0.14, 0.3, 8), look.body, M(0, -0.16, -0.36, 0, 1, 1, 1, -1.9)); // 尾羽
   // スカーフ
   tb.add(new THREE.TorusGeometry(0.2, 0.065, 8, 18).rotateX(Math.PI / 2), look.scarf, M(0, 0.3, 0.01, 0, 1.05, 1, 1));
@@ -77,8 +155,12 @@ export function buildBird(look: BirdLook): Bird {
   if (look.pack) {
     // ひょうたんポンプ: 釉薬をかけた陶器のひょうたん＋竹の噴射口
     const GOURD = 0x1fa594, GOURD_HI = 0x7fe0cc, BAMBOO = 0xb9c26a, ROPE = 0xd8322e;
-    tb.add(sph(0.215, 16, 12), GOURD, M(0, -0.04, -0.4, 0, 1, 0.95, 1), { top: GOURD_HI });
-    tb.add(sph(0.15, 14, 10), GOURD, M(0, 0.25, -0.38), { top: GOURD_HI });
+    const vessel = turned([
+      [0, -0.242], [0.095, -0.234], [0.176, -0.185], [0.215, -0.09], [0.218, -0.012],
+      [0.185, 0.065], [0.104, 0.117], [0.094, 0.151], [0.132, 0.194], [0.15, 0.249],
+      [0.141, 0.303], [0.105, 0.352], [0.065, 0.378], [0, 0.378],
+    ], 20);
+    tb.add(vessel, GOURD, M(0, 0, -0.4), { top: GOURD_HI });
     tb.add(cyl(0.055, 0.08, 0.1, 10), GOURD_HI, M(0, 0.4, -0.38));
     tb.add(cyl(0.045, 0.04, 0.07, 8), 0x9a6a3a, M(0, 0.47, -0.38));
     tb.add(new THREE.TorusGeometry(0.115, 0.028, 6, 16).rotateX(Math.PI / 2), ROPE, M(0, 0.13, -0.39));
@@ -97,31 +179,37 @@ export function buildBird(look: BirdLook): Bird {
     tb.add(cyl(0.062, 0.062, 0.035, 8).rotateX(Math.PI / 2), 0x7a8a3a, M(0.3, 0.42, 0.0));
     tb.add(cyl(0.068, 0.056, 0.06, 8).rotateX(Math.PI / 2), 0xdfe48e, M(0.3, 0.42, 0.14));
   }
-  torso.add(mesh(tb));
+  const body = mesh(tb);
+  let pumpDetail: Bird['pumpDetail'];
+  if (look.pack) {
+    // 水圧計はボディと同じ一回の描画に含める。低品質では末尾の計器だけを省く。
+    const gauge = new GeoBatch();
+    gauge.add(cyl(0.102, 0.106, 0.05, 16).rotateX(Math.PI / 2), 0xd69d46, M(0, -0.035, -0.605));
+    gauge.add(cyl(0.084, 0.084, 0.008, 16).rotateX(Math.PI / 2), 0x24505a, M(0, -0.035, -0.632));
+    for (const a of [-0.85, 0, 0.85]) {
+      gauge.add(box(0.009, 0.018, 0.005), 0xffe9b2, M(Math.sin(a) * 0.062, -0.035 + Math.cos(a) * 0.062, -0.64, 0, 1, 1, 1, 0, -a));
+    }
+    gauge.add(box(0.013, 0.066, 0.008), 0xffbd5f, M(-0.017, -0.024, -0.645, 0, 1, 1, 1, 0, 0.74));
+    gauge.add(cyl(0.011, 0.011, 0.008, 8).rotateX(Math.PI / 2), 0xffdf96, M(0, -0.044, -0.651));
+    const plain = body.geometry, details = gauge.build();
+    const plainCount = plain.index?.count ?? plain.getAttribute('position').count;
+    body.geometry = mergeGeometries([plain, details])!;
+    plain.dispose();
+    details.dispose();
+    pumpDetail = { geometry: body.geometry, plainCount };
+  }
+  torso.add(body);
 
   // 頭
   const head = new THREE.Group();
   head.position.set(0, 0.5, 0.03);
   torso.add(head);
   const hb = new GeoBatch();
-  const faceCol = new THREE.Color(0xfdfaf2);
-  hb.add(sph(0.275, 40, 28), look.body, undefined, {
-    paint: (x, y, z, out) => {
-      // 顔の白い部分（左右のほおがつながったハート形）
-      const e = ((Math.abs(x) - 0.07) / 0.15) ** 2 + ((y + 0.01) / 0.17) ** 2;
-      if (z > 0.02 && e < 1) out.copy(faceCol);
-    },
-  });
+  addPlumage(hb, look, 'face', 36, 22);
   hb.add(sph(0.05, 8, 6), 0xf7a7a0, M(0.16, -0.07, 0.2, 0, 1, 0.7, 0.5)); // ほっぺ
   hb.add(sph(0.05, 8, 6), 0xf7a7a0, M(-0.16, -0.07, 0.2, 0, 1, 0.7, 0.5));
-  // くちばし
-  hb.add(cone(0.105, 0.25, 12).rotateX(Math.PI / 2), ORANGE, M(0, -0.055, 0.33, 0, 1, 0.8, 1), { top: 0xf6a23a });
-  hb.add(cyl(0.11, 0.11, 0.035, 12).rotateX(Math.PI / 2), 0xf6c443, M(0, -0.055, 0.215, 0, 1, 0.8, 1));
-  // 麦わら帽子
-  const hatM = M(0, 0.2, -0.02, 0, 1, 1, 1, -0.16);
-  hb.add(cyl(0.36, 0.38, 0.03, 20), 0xe9cf86, hatM, { jitter: 0.08 });
-  hb.add(cyl(0.17, 0.2, 0.17, 16), 0xe9cf86, hatM.clone().multiply(M(0, 0.09, 0)), { top: 0xf3dfa2 });
-  hb.add(cyl(0.205, 0.207, 0.06, 16), look.hat, hatM.clone().multiply(M(0, 0.045, 0)));
+  addBill(hb, 12);
+  addHat(hb, look.hat, 20);
   head.add(mesh(hb));
   // 目（まばたきのため別メッシュ）
   const eg = new GeoBatch();
@@ -132,7 +220,7 @@ export function buildBird(look: BirdLook): Bird {
   const hl = new GeoBatch();
   hl.add(sph(0.016, 6, 5), 0xffffff, M(0.118, 0.062, 0.272));
   hl.add(sph(0.016, 6, 5), 0xffffff, M(-0.092, 0.062, 0.272));
-  eyes.add(new THREE.Mesh(hl.build(), new THREE.MeshBasicMaterial({ color: 0xffffff })));
+  eyes.add(new THREE.Mesh(hl.build(), matGlint));
 
   // つばさ
   const wing = (s: number): THREE.Group => {
@@ -169,7 +257,28 @@ export function buildBird(look: BirdLook): Bird {
   tail.add(mesh(sb));
   torso.add(tail);
 
-  return { root, torso, head, eyes, wingL, wingR, legL, legR, tail, squash: 1, squashV: 0, phase: 0, blink: 2 + Math.random() * 3 };
+  return { root, torso, head, eyes, wingL, wingR, legL, legR, tail, pumpDetail, squash: 1, squashV: 0, phase: 0, blink: 2 + Math.random() * 3 };
+}
+
+/** 遠くの住人は同じ帽子・羽色・スカーフのシルエットを1メッシュで描く。 */
+export function buildDistantBird(look: BirdLook): THREE.Mesh {
+  const batch = new GeoBatch();
+  batch.setBase(M(0, 0.56, 0));
+  addPlumage(batch, look, 'body', 14, 10);
+  batch.setBase(new THREE.Matrix4());
+  batch.add(cyl(0.23, 0.24, 0.09, 10), look.scarf, M(0, 0.86, 0.01));
+  for (const side of [-1, 1]) {
+    batch.add(sph(0.2, 7, 5), look.body, M(side * 0.33, 0.53, -0.02, 0, 0.33, 1.15, 0.8));
+    batch.add(cyl(0.038, 0.038, 0.22, 5), 0xf2792b, M(side * 0.14, 0.15, 0));
+    batch.add(sph(0.1, 6, 4), 0xf2792b, M(side * 0.14, 0.03, 0.07, 0, 1, 0.36, 1.7));
+  }
+
+  batch.setBase(M(0, 1.06, 0.03));
+  addPlumage(batch, look, 'face', 14, 10);
+  for (const side of [-1, 1]) batch.add(sph(0.047, 6, 4), 0x14161c, M(side * 0.105, 0.045, 0.232));
+  addBill(batch, 6);
+  addHat(batch, look.hat, 12);
+  return mesh(batch);
 }
 
 /** 状態に応じて手足や体を動かす（スキニングなしの手続きアニメーション） */

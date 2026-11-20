@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { GeoBatch, M, box, cone, cyl, sph, textTexture } from '../props';
 import { Area, BLUE, STONE, TEAL, TERRACOTTA, WALLS, WOOD, WOOD_DARK, mul, type AreaKey, type Look } from '../area';
-import { DEEP, DEFAULT_PALETTE, heightAt, pavedDistance, type TerrainDef } from '../terrain';
+import { DEEP, DEFAULT_PALETTE, heightAt, pavedDistance, type PathDef, type TerrainDef } from '../terrain';
+import { buildPostRow, inPostRow } from './town-post-row';
+import { buildPostOffice, postRoad, postSquare } from './town-post-office';
+import { buildTownMarket } from './town-market';
+import { buildHarborYard, inHarborYard } from './town-harbor';
+import { buildResidentialLane, residentialWalks } from './town-neighborhood';
 import { Goop, scatterGoop } from '../goop';
 import { fbm, lerp, mulberry32, sstep } from '../../engine/noise';
 
@@ -43,6 +48,16 @@ function townHeight(x: number, z: number): number {
   return h;
 }
 
+// 貝がらの位置と保存済みIDは、この順番の通りに対応する。
+const shellStreets: PathDef[] = [
+  { pts: [[24, 0], [92, 0]], width: 6.5 },
+  { pts: [[0, 24], [0, 84]], width: 6.5 },
+  { pts: [[-23, 7], [-64, 20]], width: 6 },
+  { pts: [[-20, -14], [-58, -41]], width: 5.5 },
+  { pts: [[92, 10], [72, 52], [12, 84]], width: 5 },
+  { pts: [[-12, 84], [-52, 58], [-64, 34]], width: 5 },
+];
+
 export const TOWN_TERRAIN: TerrainDef = {
   world: 512,
   raw: townHeight,
@@ -52,14 +67,13 @@ export const TOWN_TERRAIN: TerrainDef = {
     { pts: [[106, 0], [130, 1], [150, 0], [160, 0]], width: 2.6 }, // 桟橋へ
   ],
   streets: [
-    { pts: [[24, 0], [92, 0]], width: 6.5 },
-    { pts: [[0, 24], [0, 84]], width: 6.5 },
-    { pts: [[-23, 7], [-64, 20]], width: 6 },
-    { pts: [[-20, -14], [-58, -41]], width: 5.5 },
-    { pts: [[92, 10], [72, 52], [12, 84]], width: 5 },
-    { pts: [[-12, 84], [-52, 58], [-64, 34]], width: 5 },
+    ...shellStreets, postRoad, ...residentialWalks,
+    { pts: [[106, 0], [106, -6.2], [121, -6.2]], width: 3 },
   ],
-  plazas: [PLAZA, WEST, HARBOR, SOUTH],
+  plazas: [
+    PLAZA, WEST, HARBOR, SOUTH, postSquare,
+    { x: 27.5, z: -7, r: 5.1 }, { x: 26, z: 7.2, r: 4.6 }, // パン工房と陶器の荷車の店先
+  ],
   palette: DEFAULT_PALETTE,
 };
 
@@ -72,6 +86,7 @@ export class Town extends Area {
   readonly pierEnd = new THREE.Vector3();
   readonly lampTop = new THREE.Vector3();
   fountainTop = new THREE.Vector3();
+  private readonly streetDetail = new GeoBatch();
   private readonly gemPos: THREE.Vector3[] = [];
 
   constructor() {
@@ -86,6 +101,19 @@ export class Town extends Area {
     this.buildStreets();
     this.buildLandmarks();
     this.finishStatic();
+    buildHarborYard(this.matte, this.streetDetail, this.colliders);
+    this.finishStatic();
+    buildResidentialLane('south', this.matte, this.streetDetail, this.colliders);
+    this.finishStatic();
+    buildResidentialLane('hill', this.matte, this.streetDetail, this.colliders);
+    this.finishStatic();
+    buildPostOffice(this.matte, this.streetDetail, this.colliders);
+    buildPostRow(this.matte, this.streetDetail, this.colliders);
+    this.lampPost(-8.5, -50.5);
+    this.lampPost(8.5, -50.5);
+    this.bench(-5, -49.6, 0.2);
+    this.bench(5, -49.6, -0.2);
+    this.finishStatic();
     this.buildLighthouse();
     this.finishStatic();
     this.buildPier();
@@ -97,7 +125,8 @@ export class Town extends Area {
     const hillD = (x: number, z: number) => Math.hypot(x - HILL.x, z - HILL.z);
     this.scatter({
       radius: 172, palms: 120, bushes: 210, grass: 17000, flowers: 1600, shoreRocks: 44, seed: 20261120,
-      avoid: (x, z) => pavedDistance(x, z) < 2.6 || hillD(x, z) < 10 || (Math.abs(z) < 5 && x > 150) || Math.hypot(x - ISLET.x, z - ISLET.z) < 16,
+      avoid: (x, z) => inPostRow(x, z) || inHarborYard(x, z) || pavedDistance(x, z) < 2.6
+        || hillD(x, z) < 10 || (Math.abs(z) < 5 && x > 150) || Math.hypot(x - ISLET.x, z - ISLET.z) < 16,
       palmH: [1.3, 13], grassFrom: 2.6,
       hills: [{ x: HILL.x, z: HILL.z, r0: 12, r1: 40, count: 24 }],
       clearShore: [50, 135],
@@ -111,6 +140,16 @@ export class Town extends Area {
     this.placeNpcs();
     this.placeGoop();
     this.placeCollectibles();
+  }
+
+  /** 店先の品物などは地区ごとにまとめ、低品質と水面の反射では省く。 */
+  protected override finishStatic(): void {
+    super.finishStatic();
+    if (this.streetDetail.empty) return;
+    const mesh = new THREE.Mesh(this.streetDetail.build(), this.matMatte);
+    mesh.receiveShadow = true;
+    this.root.add(mesh);
+    this.detailMeshes.push(mesh);
   }
 
   // ───────────────────────── 村 ─────────────────────────
@@ -146,8 +185,7 @@ export class Town extends Area {
     this.crate(cb.x - dir.x * 1.5, cb.y, cb.z - dir.z * 1.5 + 0.2, 1.2, 0.1);
 
     // 広場の屋台・木箱・街灯
-    this.stall(PLAZA.x + 9.5, PLAZA.z - 7.5, 0.9, 0xe8483f);
-    this.stall(PLAZA.x - 10.5, PLAZA.z + 7, -2.2, 0x22a6a0);
+    this.stallTops.push(...buildTownMarket(this.matte, this.streetDetail, this.colliders));
     const py = PLAZA.y;
     this.crate(PLAZA.x + 13.2, py, PLAZA.z + 3.5, 1.2, 0.4);
     this.crate(PLAZA.x + 14.5, py, PLAZA.z + 4.2, 1.0, 1.1);
@@ -564,7 +602,7 @@ export class Town extends Area {
       this.shells.push(new THREE.Vector3(x + Math.cos(a) * 6, y + 0.9, z + Math.sin(a) * 6));
     }
     // 通りと小道に沿って
-    for (const path of [...TOWN_TERRAIN.paths, ...TOWN_TERRAIN.streets]) {
+    for (const path of [...TOWN_TERRAIN.paths, ...shellStreets]) {
       const pts = path.pts;
       for (let i = 1; i < pts.length; i++) {
         const n = Math.max(1, Math.round(Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) / 22));
@@ -627,6 +665,14 @@ export class Town extends Area {
       x: HARBOR.x - 7, z: HARBOR.z - 4, yaw: face(HARBOR.x - 7, HARBOR.z - 4, HARBOR.x, HARBOR.z + 4),
       name: 'ハトバ', body: 0x3f7f6a, belly: 0xe8e2d0, hat: 0xe8483f,
       lines: ['ヒカリ石が3つ集まると この倉庫に 異変がおきるそうだ', '倉庫の壁の しるしは「サンゴ入り江」に つながっている', 'ヒカリ石5つで 丘のふもとの 石の門も 目をさますぞ'],
+    });
+    this.npcs.push({
+      x: -27.1, z: 70.7, yaw: 2.5, name: 'ネリ', body: 0xb88059, belly: 0xffedcc, hat: 0x446f7e,
+      lines: ['この窯で焼いたうつわは、荷車に積んで朝市へ運ぶんだ', '青い壺は海の色。港通りのお店でも見つけてみてね'],
+    });
+    this.npcs.push({
+      x: 2.7, z: -51.1, yaw: 0.18, name: 'ユウビ', body: 0x57768c, belly: 0xffefcc, hat: 0x993a34,
+      lines: ['朝いちばんの船に乗せる手紙を 仕分けているの', 'この石畳は配達の近道。東へ行けば港通り、西へたどれば灯台の道よ'],
     });
   }
 }

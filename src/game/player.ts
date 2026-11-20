@@ -91,6 +91,11 @@ export class Player {
     this.teleport(level.spawn.x, level.spawn.y, level.spawn.z, level.spawnYaw);
   }
 
+  setDetail(enabled: boolean): void {
+    const pump = this.bird.pumpDetail;
+    if (pump) pump.geometry.setDrawRange(0, enabled ? Infinity : pump.plainCount);
+  }
+
   teleport(x: number, y: number, z: number, yaw: number): void {
     const b = this.body;
     b.x = x; b.y = y; b.z = z; b.prevY = y;

@@ -630,6 +630,7 @@ class Game {
   private applyDetail(): void {
     const detail = this.gfx.tier !== 'low';
     if (!this.cur) return;
+    this.player.setDetail(detail);
     for (const m of this.cur.area.detailMeshes) m.visible = detail;
     for (const m of this.cur.area.softShadow) m.castShadow = detail;
   }
@@ -932,7 +933,7 @@ class Game {
       particles.update(dt, area.goop, area.colliders);
       const b = player.body;
       items.update(dt, t, b.x, b.y, b.z, playing);
-      const speech = npcs.update(dt, t, b.x, b.y, b.z);
+      const speech = npcs.update(dt, t, b.x, b.y, b.z, gfx.camera.position);
       const entered = portals ? portals.update(dt, t, b.x, b.y, b.z, playing) : null;
 
       if (playing) {
@@ -994,7 +995,7 @@ class Game {
       const a = t * 0.06 + 0.6;
       this.cam.orbit(PLAZA.x, 9, PLAZA.z, 78 + Math.sin(t * 0.11) * 10, 30 + Math.sin(t * 0.07) * 6, a);
       items.update(dt, t, 0, -100, 0, false);
-      npcs.update(dt, t, 0, -100, 0);
+      npcs.update(dt, t, 0, -100, 0, gfx.camera.position);
       enemies.update(dt, t, player, false);
       portals?.update(dt, t, 0, -100, 0, false);
       area.tick(t, dt, particles, null);
@@ -1008,6 +1009,7 @@ class Game {
     area.goop.flush();
     const size = gfx.renderer.getDrawingBufferSize(_size);
     particles.sync(size.y / (2 * Math.tan((gfx.camera.fov * Math.PI) / 360)));
+    this.terrain.updateDetail(gfx.camera.position);
     gfx.render(rawDt, this.mode === 'playing');
 
     if (this.settings.showFps && this.mode !== 'title') {

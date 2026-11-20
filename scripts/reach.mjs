@@ -103,6 +103,18 @@ const r = await page.evaluate(async () => {
   check('町: 広場から灯台の丘の上まで歩いて行ける', Math.hypot(B.x + 104, B.z + 74) < 14 && B.y > 28, `到達 (${f1(B.x)}, ${f1(B.y)}, ${f1(B.z)})`);
   place(100, 0); walk(town.pierEnd.x - 2, 0, 30);
   check('町: 港から桟橋の先まで歩いて行ける', B.x > town.pierEnd.x - 4 && Math.abs(B.y - 1.5) < 0.3, `到達 (${f1(B.x)}, ${f1(B.y)})`);
+  // 目印を通る街路の折れ点を順に歩き、建物や小物で途中が塞がれていないか確かめる。
+  for (const [label, x, z] of [['郵便局前の通り', 0, -45], ['港の荷車道', 121, -6]]) {
+    const street = town.terrain.streets.find((s) => s.pts.some(([px, pz]) => Math.hypot(px - x, pz - z) < 3));
+    const name = `町: ${label}を端から端まで歩ける`;
+    if (!street || street.pts.length < 2) { check(name, false, '街路が見つからない'); continue; }
+    place(...street.pts[0]);
+    const blocked = street.pts.slice(1).find(([tx, tz]) => {
+      walk(tx, tz, 12);
+      return Math.hypot(B.x - tx, B.z - tz) > 1.4;
+    });
+    check(name, !blocked, blocked ? `目標 (${blocked}) の手前 (${f1(B.x)}, ${f1(B.z)}) で停止` : '');
+  }
   for (const p of g.town.portals.list) {
     const yaw = p.def.yaw;
     place(p.front.x + Math.sin(yaw) * 6, p.front.z + Math.cos(yaw) * 6);

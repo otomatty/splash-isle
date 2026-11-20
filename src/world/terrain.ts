@@ -119,36 +119,90 @@ export interface TerrainUniforms {
 }
 
 export interface Terrain {
-  mesh: THREE.Mesh;
+  mesh: THREE.Group;
   uniforms: TerrainUniforms;
   heightTex: THREE.DataTexture;
   /** 地形を別のエリアのものに差し替える */
   apply(def: TerrainDef): void;
+  updateDetail(camera: THREE.Vector3): void;
   /** 海シェーダー用: uv = (xz + x) * y + z */
   heightUV: THREE.Vector3;
 }
 
 const MASK = 512;
+const TILES_PER_SIDE = 4;
+const TILE = GRID / TILES_PER_SIDE;
+const ROW = TILE + 1;
 
-export function createTerrain(noiseTex: THREE.Texture): Terrain {
-  const pos = new Float32Array(N * N * 3);
-  const nrm = new Float32Array(N * N * 3);
-  const idx = new Uint32Array(GRID * GRID * 6);
-  let t = 0;
-  for (let j = 0; j < GRID; j++) {
-    for (let i = 0; i < GRID; i++) {
-      const a = j * N + i, b = a + 1, c = a + N, d = c + 1;
-      idx[t++] = a; idx[t++] = c; idx[t++] = b;
-      idx[t++] = b; idx[t++] = c; idx[t++] = d;
+/** 土と石畳のマスク。道幅と縁のぼかしが届く画素だけに、各図形の被覆率を重ねる。 */
+function paintPathMask(data: Uint8Array, terrain: TerrainDef): void {
+  data.fill(0);
+  const pixel = terrain.world / MASK, halfWorld = terrain.world / 2;
+  const edge = 1.2;
+  const texel = (v: number) => Math.floor((v + halfWorld) / pixel);
+  const stroke = (ax: number, az: number, bx: number, bz: number, radius: number, channel: number) => {
+    const reach = radius + edge;
+    const left = Math.max(0, texel(Math.min(ax, bx) - reach)), right = Math.min(MASK - 1, texel(Math.max(ax, bx) + reach));
+    const top = Math.max(0, texel(Math.min(az, bz) - reach)), bottom = Math.min(MASK - 1, texel(Math.max(az, bz) + reach));
+    const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
+    for (let j = top; j <= bottom; j++) {
+      const z = -halfWorld + (j + 0.5) * pixel;
+      for (let i = left; i <= right; i++) {
+        const x = -halfWorld + (i + 0.5) * pixel;
+        const t = len2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / len2)) : 0;
+        const distance = Math.hypot(x - (ax + t * dx), z - (az + t * dz)) - radius;
+        const value = Math.round(255 * Math.max(0, Math.min(1, 0.5 - distance / (2 * edge))));
+        const k = (j * MASK + i) * 2 + channel;
+        data[k] = Math.max(data[k], value);
+      }
+    }
+  };
+  for (const [channel, paths] of [terrain.paths, terrain.streets].entries()) {
+    for (const { pts, width } of paths) {
+      for (let i = 1; i < pts.length; i++) {
+        const [ax, az] = pts[i - 1], [bx, bz] = pts[i];
+        if (ax !== bx || az !== bz) stroke(ax, az, bx, bz, width / 2, channel);
+      }
     }
   }
-  const geo = new THREE.BufferGeometry();
-  const posAttr = new THREE.BufferAttribute(pos, 3);
-  const nrmAttr = new THREE.BufferAttribute(nrm, 3);
-  geo.setAttribute('position', posAttr);
-  geo.setAttribute('normal', nrmAttr);
-  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  for (const p of terrain.plazas) stroke(p.x, p.z, p.x, p.z, p.r, 1);
+}
 
+/** 遠景でも区画の外周と、崖など線形補間から大きく外れる中点を残す。 */
+function coarseTerrainIndices(pos: THREE.BufferAttribute): number[] {
+  const indices: number[] = [];
+  const bent = (a: number, b: number) =>
+    Math.abs(pos.getY((a + b) / 2) - (pos.getY(a) + pos.getY(b)) / 2) > 0.12;
+  // AB の中点を残す三角形。ほかの2辺でも中点が要るときだけ分割する。
+  const splitAB = (a: number, b: number, c: number, keepBC: boolean, keepCA: boolean) => {
+    const ab = (a + b) / 2, bc = (b + c) / 2, ca = (c + a) / 2;
+    if (keepBC && keepCA) {
+      indices.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+      return;
+    }
+    if (keepBC) indices.push(ab, b, bc, ab, bc, c);
+    else indices.push(ab, b, c);
+    if (keepCA) indices.push(ab, c, ca, ab, ca, a);
+    else indices.push(ab, c, a);
+  };
+  const triangle = (a: number, b: number, c: number, ab: boolean, bc: boolean, ca: boolean) => {
+    if (ab) splitAB(a, b, c, bc, ca);
+    else if (bc) splitAB(b, c, a, ca, false);
+    else if (ca) splitAB(c, a, b, false, false);
+    else indices.push(a, b, c);
+  };
+  for (let z = 0; z < TILE; z += 2) {
+    for (let x = 0; x < TILE; x += 2) {
+      const a = z * ROW + x, b = a + 2, c = a + 2 * ROW, d = c + 2;
+      const diagonal = bent(b, c);
+      triangle(a, c, b, x === 0 || bent(a, c), diagonal, z === 0 || bent(b, a));
+      triangle(b, c, d, diagonal, z + 2 === TILE || bent(c, d), x + 2 === TILE || bent(d, b));
+    }
+  }
+  return indices;
+}
+
+export function createTerrain(noiseTex: THREE.Texture): Terrain {
   const half = new Uint16Array(N * N);
   const heightTex = new THREE.DataTexture(half, N, N, THREE.RedFormat, THREE.HalfFloatType);
   heightTex.minFilter = heightTex.magFilter = THREE.LinearFilter;
@@ -286,11 +340,31 @@ export function createTerrain(noiseTex: THREE.Texture): Terrain {
         roughnessFactor = mix(roughnessFactor, 0.22, t_goop);`,
       );
   };
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  mesh.castShadow = false; // 地形自身の影は省く（影パスの頂点数を大きく減らせる）
-  mesh.frustumCulled = false;
+  const mesh = new THREE.Group();
   mesh.name = 'terrain';
+  // 近景は旧グリッドと同じ対角線で張り、全区画でインデックスを共有する。
+  const fine: number[] = [];
+  for (let z = 0; z < TILE; z++) {
+    for (let x = 0; x < TILE; x++) {
+      const a = z * ROW + x, b = a + 1, c = a + ROW;
+      fine.push(a, c, b, b, c, c + 1);
+    }
+  }
+  const nearIndex = new THREE.Uint16BufferAttribute(fine, 1);
+  const tiles = Array.from({ length: TILES_PER_SIDE ** 2 }, (_, i) => {
+    const x = (i % TILES_PER_SIDE) * TILE, z = Math.floor(i / TILES_PER_SIDE) * TILE;
+    const geo = new THREE.BufferGeometry();
+    const pos = new THREE.BufferAttribute(new Float32Array(ROW * ROW * 3), 3);
+    const nrm = new THREE.BufferAttribute(new Float32Array(ROW * ROW * 3), 3);
+    geo.setAttribute('position', pos);
+    geo.setAttribute('normal', nrm);
+    geo.setIndex(nearIndex);
+    const part = new THREE.Mesh(geo, mat);
+    part.receiveShadow = true;
+    mesh.add(part);
+    const farIndex = new THREE.BufferAttribute(new Uint16Array(nearIndex.count), 1);
+    return { x, z, geo, pos, nrm, farIndex, farCount: 0 };
+  });
 
   const n = new THREE.Vector3();
   const apply = (d: TerrainDef): void => {
@@ -302,31 +376,32 @@ export function createTerrain(noiseTex: THREE.Texture): Terrain {
       const z = -HALF + j * CELL;
       for (let i = 0; i < N; i++) heights[j * N + i] = d.raw(-HALF + i * CELL, z);
     }
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        const k = (j * N + i) * 3;
-        pos[k] = -HALF + i * CELL;
-        pos[k + 1] = heights[j * N + i];
-        pos[k + 2] = -HALF + j * CELL;
-        const xl = heights[j * N + Math.max(i - 1, 0)], xr = heights[j * N + Math.min(i + 1, GRID)];
-        const zu = heights[Math.max(j - 1, 0) * N + i], zd = heights[Math.min(j + 1, GRID) * N + i];
-        n.set(xl - xr, 2 * CELL, zu - zd).normalize();
-        nrm[k] = n.x; nrm[k + 1] = n.y; nrm[k + 2] = n.z;
+    for (const tile of tiles) {
+      for (let z = 0; z < ROW; z++) {
+        const j = tile.z + z;
+        for (let x = 0; x < ROW; x++) {
+          const i = tile.x + x, k = z * ROW + x;
+          tile.pos.setXYZ(k, -HALF + i * CELL, heights[j * N + i], -HALF + j * CELL);
+          const xl = heights[j * N + Math.max(i - 1, 0)], xr = heights[j * N + Math.min(i + 1, GRID)];
+          const zu = heights[Math.max(j - 1, 0) * N + i], zd = heights[Math.min(j + 1, GRID) * N + i];
+          n.set(xl - xr, 2 * CELL, zu - zd).normalize();
+          tile.nrm.setXYZ(k, n.x, n.y, n.z);
+        }
       }
+      tile.pos.needsUpdate = true;
+      tile.nrm.needsUpdate = true;
+      tile.geo.computeBoundingBox();
+      tile.geo.computeBoundingSphere();
+      const coarse = coarseTerrainIndices(tile.pos);
+      tile.farCount = coarse.length;
+      tile.farIndex.set(coarse);
+      tile.farIndex.needsUpdate = true;
+      tile.geo.setIndex(nearIndex);
+      tile.geo.setDrawRange(0, nearIndex.count);
     }
-    posAttr.needsUpdate = true;
-    nrmAttr.needsUpdate = true;
-    geo.computeBoundingSphere();
     for (let i = 0; i < N * N; i++) half[i] = THREE.DataUtils.toHalfFloat(heights[i]);
     heightTex.needsUpdate = true;
-    for (let j = 0; j < MASK; j++) {
-      for (let i = 0; i < MASK; i++) {
-        const x = -HALF + ((i + 0.5) / MASK) * WORLD, z = -HALF + ((j + 0.5) / MASK) * WORLD;
-        const k = (j * MASK + i) * 2;
-        maskData[k] = Math.round(255 * Math.max(0, Math.min(1, 0.5 - polyDistance(d.paths, x, z) / 2.4)));
-        maskData[k + 1] = Math.round(255 * Math.max(0, Math.min(1, 0.5 - pavedDistance(x, z) / 2.4)));
-      }
-    }
+    paintPathMask(maskData, d);
     maskTex.needsUpdate = true;
     const p = d.palette;
     pal.uSandA.value.fromArray(p.sandA); pal.uSandB.value.fromArray(p.sandB);
@@ -342,5 +417,16 @@ export function createTerrain(noiseTex: THREE.Texture): Terrain {
     heightUV.set(HALF, GRID / (WORLD * N), 0.5 / N);
   };
 
-  return { mesh, uniforms, heightTex, apply, heightUV };
+  const updateDetail = (camera: THREE.Vector3): void => {
+    for (const tile of tiles) {
+      const near = tile.geo.index === nearIndex;
+      const distance = tile.geo.boundingBox!.distanceToPoint(camera);
+      // 少し離れてから粗くし、境目で立ち止まっても切り替わりを繰り返さない。
+      const useNear = distance < (near ? 64 : 52);
+      if (useNear === near) continue;
+      tile.geo.setIndex(useNear ? nearIndex : tile.farIndex);
+      tile.geo.setDrawRange(0, useNear ? nearIndex.count : tile.farCount);
+    }
+  };
+  return { mesh, uniforms, heightTex, apply, heightUV, updateDetail };
 }
