@@ -74,6 +74,16 @@ export const FLAG_COLORS = [0xe8483f, 0xf6c443, 0x22a6a0, 0xfaf6ea, 0xf08a2e, 0x
 
 export const mul = (a: THREE.Matrix4, b: THREE.Matrix4) => a.clone().multiply(b);
 
+// BoxGeometry の6面。建物の中や、隣の部材に完全に覆われる面だけを省く。
+const boxFaces = ['right', 'left', 'top', 'bottom', 'front', 'back'] as const;
+function houseBox(w: number, h: number, d: number, ...hidden: (typeof boxFaces)[number][]): THREE.BoxGeometry {
+  const geo = box(w, h, d);
+  const indices = geo.index!.array.filter((_, i) => !hidden.includes(boxFaces[Math.floor(i / 6)]));
+  geo.clearGroups();
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  return geo;
+}
+
 // エリアをまたいで使い回す重いジオメトリ（破棄しない）
 const shared = <T extends THREE.BufferGeometry>(g: T): T => { g.userData.shared = true; return g; };
 let palmGeo: THREE.BufferGeometry | null = null;
@@ -317,11 +327,11 @@ export abstract class Area {
     // 広場の屋根・外階段は足場。外形の高さを保ち、短い家は上階の天井高を詰める。
     const firstCeiling = Math.max(2.55, h / floors);
     const upperHeight = (h - firstCeiling) / (floors - 1);
-    b.add(box(w, firstCeiling + g, d), wall, M(0, (firstCeiling + g) / 2, 0), { ao: 0.72 });
+    b.add(houseBox(w, firstCeiling + g, d, 'top', 'bottom'), wall, M(0, (firstCeiling + g) / 2, 0), { ao: 0.72 });
     const upperWall = new THREE.Color(wall).lerp(new THREE.Color(trim), 0.24);
     for (let storey = 1; storey < floors; storey++) {
       const sill = g + firstCeiling + (storey - 1) * upperHeight;
-      b.add(box(w + 0.06, upperHeight, d + 0.06), upperWall, M(0, sill + upperHeight / 2, 0), { ao: 0.89 });
+      b.add(houseBox(w + 0.06, upperHeight, d + 0.06, 'bottom'), upperWall, M(0, sill + upperHeight / 2, 0), { ao: 0.89 });
       b.add(box(w + 0.24, 0.14, d + 0.24), trim, M(0, sill, 0));
     }
     b.add(box(w + 0.22, 0.95, d + 0.22), 0xa39078, M(0, 0.475, 0), { ao: 0.75 });
@@ -330,9 +340,9 @@ export abstract class Area {
     const ph = 0.35, pt = 0.3;
     b.add(box(w + 0.12, ph, pt), trim, M(0, H + ph / 2, d / 2 - pt / 2 + 0.06));
     b.add(box(w + 0.12, ph, pt), trim, M(0, H + ph / 2, -d / 2 + pt / 2 - 0.06));
-    b.add(box(pt, ph, d - pt), trim, M(w / 2 - pt / 2 + 0.06, H + ph / 2, 0));
-    b.add(box(pt, ph, d - pt), trim, M(-w / 2 + pt / 2 - 0.06, H + ph / 2, 0));
-    b.add(box(w - 0.5, 0.04, d - 0.5), 0xd9c7a8, M(0, H + 0.02, 0)); // 屋上の床
+    b.add(houseBox(pt, ph, d - pt, 'front', 'back'), trim, M(w / 2 - pt / 2 + 0.06, H + ph / 2, 0));
+    b.add(houseBox(pt, ph, d - pt, 'front', 'back'), trim, M(-w / 2 + pt / 2 - 0.06, H + ph / 2, 0));
+    b.add(houseBox(w - 0.5, 0.04, d - 0.5, 'bottom'), 0xd9c7a8, M(0, H + 0.02, 0)); // 屋上の床
 
     this.colliders.addBox(x, y0 + H / 2, z, w, H, d, yaw);
     const topY = y0 + H;
@@ -342,9 +352,9 @@ export abstract class Area {
     }
 
     // 玄関
-    b.add(box(1.6, 2.5, 0.2), trim, M(0, g + 1.25, d / 2 + 0.02));
-    b.add(box(1.2, 2.2, 0.24), accent, M(0, g + 1.1, d / 2 + 0.04), { ao: 0.8 });
-    b.add(box(1.0, 0.06, 0.26), 0xffffff, M(0, g + 1.5, d / 2 + 0.045));
+    b.add(houseBox(1.6, 2.5, 0.2, 'back'), trim, M(0, g + 1.25, d / 2 + 0.02));
+    b.add(houseBox(1.2, 2.2, 0.24, 'back'), accent, M(0, g + 1.1, d / 2 + 0.04), { ao: 0.8 });
+    b.add(houseBox(1.0, 0.06, 0.26, 'back'), 0xffffff, M(0, g + 1.5, d / 2 + 0.045));
     gl.add(sph(0.07, 8, 6), 0xe8b93c, M(0.42, g + 1.05, d / 2 + 0.2));
     b.add(box(2.0, 0.22, 0.8), STONE, M(0, g + 0.02, d / 2 + 0.4));
     if (awning) {
@@ -366,13 +376,13 @@ export abstract class Area {
     const flowerCols = [0xe8483f, 0xf6c443, 0xf08ab0, 0xffffff, 0xb05ad8];
     const win = (f: 'f' | 'b' | 'l' | 'r', u: number, y: number) => {
       const m = face(f, u, y);
-      b.add(box(1.02, 1.36, 0.14), trim, mul(m, M(0, 0, 0.02)));
-      gl.add(box(0.8, 1.14, 0.16), 0x1c3b55, mul(m, M(0, 0, 0.03)));
-      b.add(box(0.05, 1.14, 0.18), trim, mul(m, M(0, 0, 0.03)));
-      b.add(box(0.8, 0.05, 0.18), trim, mul(m, M(0, 0.1, 0.03)));
+      b.add(houseBox(1.02, 1.36, 0.14, 'back'), trim, mul(m, M(0, 0, 0.02)));
+      gl.add(houseBox(0.8, 1.14, 0.16, 'back'), 0x1c3b55, mul(m, M(0, 0, 0.03)));
+      b.add(houseBox(0.05, 1.14, 0.18, 'back'), trim, mul(m, M(0, 0, 0.03)));
+      b.add(houseBox(0.8, 0.05, 0.18, 'back'), trim, mul(m, M(0, 0.1, 0.03)));
       b.add(box(0.4, 1.24, 0.07), accent, mul(m, M(-0.74, 0, 0.07)), { ao: 0.85 });
       b.add(box(0.4, 1.24, 0.07), accent, mul(m, M(0.74, 0, 0.07)), { ao: 0.85 });
-      b.add(box(1.3, 0.09, 0.3), STONE, mul(m, M(0, -0.74, 0.12)));
+      b.add(houseBox(1.3, 0.09, 0.3, 'back'), STONE, mul(m, M(0, -0.74, 0.12)));
     };
     const groundWindowY = g + 1.75;
     if (w >= 7) {
@@ -390,8 +400,8 @@ export abstract class Area {
       const y = g + firstCeiling + (storey - 0.5) * upperHeight;
       const upstairs = (side: 'f' | 'b' | 'l' | 'r', u: number) => {
         const frame = face(side, u, y);
-        b.add(box(1.44, tall + 0.10, 0.08), accent, mul(frame, M(0, 0, 0.055)));
-        gl.add(box(0.84, tall, 0.08), 0x274c60, mul(frame, M(0, 0, 0.11)));
+        b.add(houseBox(1.44, tall + 0.10, 0.08, 'back'), accent, mul(frame, M(0, 0, 0.055)));
+        gl.add(houseBox(0.84, tall, 0.08, 'back'), 0x274c60, mul(frame, M(0, 0, 0.11)));
         b.add(box(0.85, 0.065, 0.055), trim, mul(frame, M(0, 0.17, 0.16)));
       };
       for (const side of ['f', 'b'] as const) {
@@ -514,8 +524,15 @@ export abstract class Area {
       p.y -= sag * 4 * t * (1 - t);
       pts.push(p);
     }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    this.matte.setBase(new THREE.Matrix4()).add(new THREE.TubeGeometry(curve, n * 2, 0.018, 4), 0x5a4a3a);
+    // 旗の位置はそのままに、同じ放物線の紐だけを簡略化する。区間の弦と曲線の最大の高低差は sag × Δt²。
+    const radius = 0.018;
+    const control = new THREE.Vector3().lerpVectors(a, c, 0.5);
+    control.y -= 2 * sag;
+    const curve = new THREE.QuadraticBezierCurve3(a, control, c);
+    // TubeGeometry は弧長で等分する。水平長で割ると、1区間の Δt を上から見積もれる。
+    const span = Math.hypot(c.x - a.x, c.z - a.z);
+    const segments = span > 0 ? Math.max(2, Math.ceil(curve.getLength() / span * Math.sqrt(sag / radius))) : 2;
+    this.matte.setBase(new THREE.Matrix4()).add(new THREE.TubeGeometry(curve, segments, radius, 4), 0x5a4a3a);
     const pos: number[] = [], col: number[] = [];
     const cc = new THREE.Color();
     const off = Math.abs(Math.floor(a.x * 3 + c.z * 5));

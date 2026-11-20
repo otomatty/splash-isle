@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Colliders } from '../colliders';
 import { GeoBatch, M, box, cyl, sph } from '../props';
 import { heightAt } from '../terrain';
+import { buildMarketFlorist } from './town-market-garden';
 
 const OAK = 0xb6804d, TIMBER = 0x664735, LINEN = 0xffedce, TEAL = 0x247d82;
 const BRICK = 0xb85436, HONEY = 0xe3ac61, INDIGO = 0x334f80;
@@ -255,5 +256,6 @@ export function buildTownMarket(b: GeoBatch, detail: GeoBatch, colliders: Collid
   bakery(b, detail, colliders);
   marmaladeTable(b, detail, colliders, 23.55, -7.9);
   potteryCart(b, detail, colliders);
+  buildMarketFlorist(b, detail, colliders);
   return [fruitTop, textileTop];
 }

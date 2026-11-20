@@ -9,6 +9,9 @@ import { buildOutskirts, outskirtPaths } from './town-outskirts';
 import { buildPostRow, inPostRow } from './town-post-row';
 import { buildPostOffice, postRoad, postSquare } from './town-post-office';
 import { buildTownMarket } from './town-market';
+import { buildPlazaTrees } from './town-plaza-trees';
+import { buildTownCourtyard } from './town-courtyard';
+import { buildDialBed, buildKitchenGarden, buildMarketPump, dressTownFountain } from './town-water-garden';
 import { buildHarborYard, inHarborYard } from './town-harbor';
 import { buildResidentialLane, residentialWalks } from './town-neighborhood';
 import { slideAlongBoundary, type Body } from '../colliders';
@@ -105,6 +108,10 @@ export class Town extends Area {
     this.fountainTop = this.fountain(PLAZA.x, PLAZA.z);
     // 地区ごとに別メッシュへまとめる（画面や影の範囲に入らない地区は描画を省ける）
     this.buildVillage();
+    dressTownFountain(this.matte, this.streetDetail, PLAZA.x, PLAZA.z);
+    this.pools.push(buildMarketPump(this.matte, this.streetDetail, this.colliders));
+    buildDialBed(this.matte, this.streetDetail, this.colliders);
+    buildPlazaTrees(this.matte, this.streetDetail, this.colliders);
     this.finishStatic();
     this.buildStreets();
     this.buildLandmarks();
@@ -486,6 +493,7 @@ export class Town extends Area {
       }
     };
     row(24, 0, 92, 0, [0.2, 0.38, 0.56, 0.74]); // 港への大通り
+    buildKitchenGarden(this.matte, this.streetDetail, this.colliders);
     this.finishStatic();
     row(0, 24, 0, 84, [0.22, 0.44, 0.66]); // 浜辺への通り
     this.finishStatic();
@@ -497,6 +505,7 @@ export class Town extends Area {
       const x = WEST.x + Math.cos(ang) * (WEST.r + 4.5), z = WEST.z + Math.sin(ang) * (WEST.r + 4.5);
       this.buildHouse(x, z, Math.atan2(WEST.x - x, WEST.z - z), w, 6, h, WALLS[(idx + 1) % WALLS.length], accents[idx % accents.length], false, a === 100, a !== 100, true, idx++);
     }
+    buildTownCourtyard(this.matte, this.streetDetail, this.colliders);
     // 通りの街灯とベンチ、広場の木箱
     for (let i = 0; i < 5; i++) {
       this.lampPost(34 + i * 13, 4.6);
@@ -692,6 +701,10 @@ export class Town extends Area {
       x: -27, z: -22.5, yaw: face(-27, -22.5, -22, -17),
       name: 'ミナ', body: 0xd8a24a, belly: 0xfff4d8, hat: 0x22a6a0,
       lines: ['灯台の丘からは ゆけむり山の火口と そよかぜ台地の気球が見えるよ。てっぺんにはヒカリ石もあるんだって', '空中でジャンプを長押しすると ホバーできるよ', '丘のふもとの 石の門も 気になるなあ…'],
+    });
+    this.npcs.push({
+      x: 39.6, z: 17.4, yaw: -Math.PI / 2, name: 'サルビア', body: 0x849871, belly: 0xffe3b7, hat: 0xbc7950,
+      lines: ['摘みたては 今朝のパンに。余った葉は ひもで束ねて干しておくの', 'パン工房の手前にある 青い水受けに寄ると、ポンプに水を足せるよ'],
     });
     const bp = this.beachPoint(100, 13);
     this.npcs.push({

@@ -135,6 +135,21 @@ const r = await page.evaluate(async () => {
     check(`町: ${p.def.label}の入口の前まで歩いて行ける`, Math.hypot(B.x - p.front.x, B.z - p.front.z) < 1.3, `${f1(before)}m → ${f1(Math.hypot(B.x - p.front.x, B.z - p.front.z))}m`);
   }
 
+  // パン工房前の水場は、通りから歩いて水受けに寄るだけで使える。
+  place(19.25, 0);
+  P.tank = 30;
+  walk(19.25, -5.75, 5);
+  for (let i = 0; i < 120; i++) tick();
+  check('町: 市場の井戸まで歩いてタンクを満タンにできる', B.z < -4.9 && P.tank === P.tankMax);
+
+  // 時計塔通りに開いた藤棚を、屋根に登らず地上のまま両側から抜ける。
+  place(-32.15, -0.60);
+  const courtGrade = B.y;
+  walk(-37.55, 4.25, 5);
+  const reachedWest = B.x < -36.7 && Math.abs(B.y - courtGrade) < 0.4;
+  walk(-32.15, -0.60, 5);
+  check('町: 藤棚を両方向から歩き抜けられる', reachedWest && B.x > -33 && Math.abs(B.y - courtGrade) < 0.4);
+
   // 浜の木道から入水。歩行と同じ入力で浅瀬・遊泳・上陸が切り替わる。
   place(0, 106);
   P.tank = 10;
