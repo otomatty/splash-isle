@@ -1,0 +1,3 @@
+# ローカル開発用。このファイルを .dev.vars にコピーして値を入れてください（.dev.vars は Git に入れない）
+GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=xxxxxxxx

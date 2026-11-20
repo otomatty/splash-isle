@@ -1,0 +1,35 @@
+{
+  "name": "splash-isle",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "スプラッシュ・アイル — 水で島をきれいにする3Dアクション（Three.js + Cloudflare Workers）",
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "wrangler dev",
+    "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit && vite build",
+    "build:single": "vite build --config vite.single.config.ts",
+    "preview": "npm run build && wrangler dev",
+    "types": "wrangler types --strict-vars false",
+    "db:migrate:local": "wrangler d1 migrations apply splash-isle --local",
+    "db:migrate": "wrangler d1 migrations apply splash-isle --remote",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:first": "npm run build && wrangler deploy --secrets-file .secrets.env",
+    "test:worker": "node scripts/test-worker.mjs",
+    "test:game": "node scripts/test.mjs",
+    "test:reach": "node scripts/reach.mjs"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "esbuild": "^0.28.2",
+    "miniflare": "^5.20261118.0-beta",
+    "puppeteer-core": "^25.18.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vite-plugin-singlefile": "^2.3.4",
+    "wrangler": "^4.165.0"
+  }
+}

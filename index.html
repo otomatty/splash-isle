@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#1c8fd6" />
+    <meta name="description" content="水を噴射して島のスミを洗い流す、ブラウザで遊べる3Dアクション。" />
+    <title>スプラッシュ・アイル — ヒカリ島の大そうじ</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%231c8fd6'/%3E%3Cpath d='M32 10c10 14 15 21 15 29a15 15 0 0 1-30 0c0-8 5-15 15-29z' fill='%23fff'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game" tabindex="0" aria-label="ゲーム画面"></canvas>
+
+      <!-- プレイ中の表示 -->
+      <div id="hud" class="hidden" aria-hidden="true">
+        <div class="hud-tl">
+          <div class="counters">
+            <div class="counter gemc"><svg viewBox="0 0 34 40"><path d="M17 2 31 16 17 38 3 16z" fill="#ffc233" stroke="#fff" stroke-width="2.5"/><path d="M17 2 24 16 17 38 10 16z" fill="#fff3b0"/></svg><span id="gemCount">0</span><small>/14</small></div>
+            <div class="counter"><svg viewBox="0 0 32 32"><path d="M16 4c7 0 12 6 12 13 0 4-3 7-6 8l-2 3h-8l-2-3c-3-1-6-4-6-8C4 10 9 4 16 4z" fill="#ffc233" stroke="#7a4a00" stroke-width="2"/><path d="M16 6v20M10 8l3 18M22 8l-3 18M6 13l6 13M26 13l-6 13" stroke="#b97a10" stroke-width="1.4" fill="none"/></svg><span id="shellCount">0</span></div>
+            <div class="counter"><svg viewBox="0 0 32 32"><path d="M16 2l4 9 10 1-7.5 6.5L25 29l-9-5-9 5 2.5-10.500L2 12l10-1z" fill="#ff5a4a" stroke="#8a1a10" stroke-width="2" stroke-linejoin="round"/></svg><span id="starCount">0</span><small>/8</small></div>
+          </div>
+        </div>
+        <div class="hud-tr">
+          <div class="hearts" id="hearts"></div>
+          <div class="timer" id="timer">0:00.00</div>
+        </div>
+        <div class="hud-bl">
+          <div class="tank">
+            <div class="tank-ring" id="hoverRing"></div>
+            <div class="tank-body"><div class="tank-fill" id="tankFill"></div><div class="tank-shine"></div></div>
+            <div class="tank-label">みず</div>
+          </div>
+        </div>
+        <div class="objective" id="objective"></div>
+        <div class="toast" id="toast"></div>
+        <div class="bubble hidden" id="bubble"><b id="bubbleName"></b><span id="bubbleText"></span></div>
+        <div class="fps hidden" id="fps"></div>
+        <div class="hint hidden" id="hint"></div>
+      </div>
+
+      <!-- タッチ操作 -->
+      <div id="touch" class="hidden">
+        <div class="stick"><div class="knob"></div></div>
+        <button class="tbtn btn-pause" aria-label="ポーズ">II</button>
+        <button class="tbtn btn-spray" aria-label="水をかける">みず</button>
+        <button class="tbtn btn-hover" aria-label="ホバー">ホバー</button>
+        <button class="tbtn btn-jump" aria-label="ジャンプ">ジャンプ</button>
+      </div>
+
+      <!-- ヒカリ石を取ったときの演出 -->
+      <div id="gemGet" class="hidden">
+        <div class="gem-burst"></div>
+        <div class="gem-title">ヒカリ石 ゲット！</div>
+        <div class="gem-sub" id="gemSub"></div>
+      </div>
+
+      <!-- タイトル -->
+      <div id="title" class="screen hidden">
+        <div class="logo">
+          <div class="logo-sub">ヒカリ島の大そうじ</div>
+          <h1><span>ス</span><span>プ</span><span>ラ</span><span>ッ</span><span>シ</span><span>ュ</span><i>・</i><span>ア</span><span>イ</span><span>ル</span></h1>
+        </div>
+        <div class="menu">
+          <button class="btn primary" id="btnPlay">あそぶ</button>
+          <button class="btn" id="btnNew">はじめから</button>
+          <button class="btn" id="btnRank">ランキング</button>
+          <button class="btn" id="btnHow">あそびかた</button>
+          <button class="btn" id="btnSettings">せってい</button>
+        </div>
+        <div class="account" id="account"></div>
+        <div class="foot">キーボード＋マウス / ゲームパッド / タッチ対応</div>
+      </div>
+
+      <!-- ポーズ -->
+      <div id="pause" class="screen dim hidden">
+        <div class="panel">
+          <h2 id="pauseTitle">ポーズ</h2>
+          <ul class="missions" id="missions"></ul>
+          <div class="menu">
+            <button class="btn primary" id="btnResume">つづける</button>
+            <button class="btn hidden" id="btnExitStage">町へもどる</button>
+            <button class="btn" id="btnPauseHow">あそびかた</button>
+            <button class="btn" id="btnPauseSettings">せってい</button>
+            <button class="btn" id="btnToTitle">タイトルへ</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ステージ選択（入口に飛びこんだとき） -->
+      <div id="episodes" class="screen dim hidden">
+        <div class="panel">
+          <div class="logo-sub" id="epBlurb"></div>
+          <h2 id="epName"></h2>
+          <div class="episodes" id="epList"></div>
+          <div class="note">ステージをえらんでください（Space / A ボタンで つぎのステージへ）</div>
+          <div class="menu"><button class="btn" id="btnEpBack">やめる</button></div>
+        </div>
+      </div>
+
+      <!-- 設定 -->
+      <div id="settings" class="screen dim hidden">
+        <div class="panel">
+          <h2>せってい</h2>
+          <label class="row"><span>画質</span>
+            <select id="setQuality">
+              <option value="auto">自動（おすすめ）</option>
+              <option value="high">高</option>
+              <option value="medium">中</option>
+              <option value="low">低</option>
+            </select>
+          </label>
+          <div class="note" id="gfxInfo"></div>
+          <label class="row"><span>視点の速さ</span><input type="range" id="setSens" min="0.3" max="2.5" step="0.05" /></label>
+          <label class="row"><span>上下の視点を反転</span><input type="checkbox" id="setInvert" /></label>
+          <label class="row"><span>効果音</span><input type="range" id="setVolume" min="0" max="1" step="0.02" /></label>
+          <label class="row"><span>音楽</span><input type="range" id="setMusic" min="0" max="1" step="0.02" /></label>
+          <label class="row"><span>FPS を表示</span><input type="checkbox" id="setFps" /></label>
+          <div class="menu"><button class="btn primary" id="btnSettingsClose">とじる</button></div>
+        </div>
+      </div>
+
+      <!-- あそびかた -->
+      <div id="how" class="screen dim hidden">
+        <div class="panel wide">
+          <h2>あそびかた</h2>
+          <p class="lead">島の広場が、ねばねばの「スミ」で汚されてしまった！<br />主人公プカの<b>ひょうたんポンプ</b>で洗い流し、14個の<b>ヒカリ石</b>を集めよう。</p>
+          <table class="keys">
+            <tr><th></th><th>キーボード＋マウス</th><th>ゲームパッド</th></tr>
+            <tr><td>いどう</td><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>左スティック</td></tr>
+            <tr><td>視点</td><td>マウス（ホイールで距離）</td><td>右スティック</td></tr>
+            <tr><td>ジャンプ</td><td><kbd>Space</kbd></td><td>A</td></tr>
+            <tr><td>ホバー</td><td>空中で <kbd>Space</kbd> 長押し / <kbd>Shift</kbd> / 右クリック</td><td>空中で A 長押し / LT</td></tr>
+            <tr><td>水をかける</td><td>左クリック / <kbd>F</kbd></td><td>RT / X</td></tr>
+            <tr><td>ポーズ</td><td><kbd>Esc</kbd> / <kbd>P</kbd></td><td>START</td></tr>
+          </table>
+          <ul class="tips">
+            <li>水は<b>海や噴水に入る</b>と補給できる。</li>
+            <li>水をかける向きは、視点の上下で変えられる。見上げれば遠くまで届く。</li>
+            <li>スミの上は足を取られる。スミボウは水をかけるか、上から踏んでやっつけよう。</li>
+            <li>ヒカリ石が集まると、町の建物が<b>スミのかたまり</b>に覆われる。洗い流すと壁に<b>入口のしるし</b>が現れ、飛びこむと別のエリアへ行ける。</li>
+          </ul>
+          <div class="menu"><button class="btn primary" id="btnHowClose">とじる</button></div>
+        </div>
+      </div>
+
+      <!-- ランキング -->
+      <div id="rank" class="screen dim hidden">
+        <div class="panel">
+          <h2>ランキング</h2>
+          <div class="note">ヒカリ石を14個すべて集めるまでの最短タイム</div>
+          <ol class="ranklist" id="rankList"></ol>
+          <div class="menu"><button class="btn primary" id="btnRankClose">とじる</button></div>
+        </div>
+      </div>
+
+      <!-- クリア -->
+      <div id="ending" class="screen hidden">
+        <div class="panel wide">
+          <div class="logo-sub">ヒカリ島が かがやきを とりもどした！</div>
+          <h2 class="big">クリア おめでとう！</h2>
+          <div class="result">
+            <div><small>タイム</small><b id="endTime"></b></div>
+            <div><small>ベスト</small><b id="endBest"></b></div>
+            <div><small>貝がら</small><b id="endShells"></b></div>
+            <div><small>ヒトデ</small><b id="endStars"></b></div>
+          </div>
+          <div class="note" id="endNote"></div>
+          <div class="menu">
+            <button class="btn primary" id="btnEndContinue">島をさんぽする</button>
+            <button class="btn" id="btnEndRank">ランキング</button>
+            <button class="btn" id="btnEndNew">もういちど はじめから</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="fade"></div>
+      <div id="loading"><div class="drop"></div><div class="loading-text" id="loadingText">島をつくっています…</div></div>
+      <div id="error" class="hidden"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

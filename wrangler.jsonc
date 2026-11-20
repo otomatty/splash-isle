@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "splash-isle",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-20",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // ゲーム本体（Vite のビルド結果）は静的アセットとして配信し、/api/* だけ Worker が処理する
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // セーブデータ・ランキング・ログインセッション
+  // database_id は `npx wrangler d1 create splash-isle` の出力で置き換えてください
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "splash-isle",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Google Cloud Console で発行した OAuth クライアント ID（公開してよい値）
+  "vars": {
+    "GOOGLE_CLIENT_ID": ""
+  },
+  // クライアントシークレットは設定ファイルに書かない。初回は `npm run deploy:first`（.secrets.env を使う）、
+  // 入れ替えは `npx wrangler secret put GOOGLE_CLIENT_SECRET`
+  "secrets": {
+    "required": ["GOOGLE_CLIENT_SECRET"]
+  },
+
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}
