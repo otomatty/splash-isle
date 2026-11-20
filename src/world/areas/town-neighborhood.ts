@@ -220,11 +220,11 @@ function frontWalls(lane: Lane, batch: GeoBatch, detail: GeoBatch, colliders: Co
     batch.setBase(base);
     detail.setBase(base);
     const length = r.end - r.start;
-    batch.add(box(length, 0.085, 1.80), 0xd7c8aa, M(0, 0.045, 0));
-    colliders.addBox(x, y + 0.045, z, length, 0.085, 1.80, yaw);
-    batch.add(box(length, 0.11, 0.18), 0xa79378, M(0, 0.06, -side * 0.83));
+    // 道と同じ高さに敷いた舗装。分岐や門をどの向きにも横切れるよう、足元は地形面を使う。
+    batch.add(box(length, 0.04, 1.80), 0xd7c8aa, M(0, -0.006, 0));
+    batch.add(box(length, 0.05, 0.18), 0xa79378, M(0, 0.002, -side * 0.83));
     for (let k = 0.6; k < length; k += 1.4) {
-      detail.add(box(0.033, 0.016, 1.60), 0xbba68b, M(k - length / 2, 0.088, side * 0.05));
+      detail.add(box(0.033, 0.016, 1.60), 0xbba68b, M(k - length / 2, 0.013, side * 0.05));
     }
   }
   for (const [side, a, b] of bays) {
