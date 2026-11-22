@@ -1,0 +1,58 @@
+name: Deploy guest preview to Pages
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: '公開するコミットの完全なSHA（省略時はmainの現在のコミット）'
+        required: false
+        type: string
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PREVIEW_SHA: ${{ inputs.commit_sha || github.sha }}
+    steps:
+      - name: Validate commit SHA
+        run: '[[ "$PREVIEW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]'
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PREVIEW_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build:single
+      - name: Stage the standalone game
+        run: install -Dm644 dist-single/index.html "$RUNNER_TEMP/guest-site/index.html"
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/guest-site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
