@@ -34,11 +34,14 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - run: npm ci
       - name: Verify guest save compatibility before publishing
         run: |
+          ./node_modules/.bin/esbuild src/game/state.ts --bundle --platform=browser --format=esm --outfile="$RUNNER_TEMP/pages-guest-state.mjs"
+          cd "$RUNNER_TEMP"
           node --experimental-webstorage --localstorage-file="$RUNNER_TEMP/pages-guest.sqlite" --input-type=module <<'JS'
           import assert from 'node:assert/strict';
-          import * as game from './src/game/state.ts';
+          import * as game from './pages-guest-state.mjs';
 
           // A shares the original single-save key. A guest can land and leave before collecting anything.
           const landed = { v: 1, gems: 0, revealed: 10, shells: [], stars: 0, portals: 0,
@@ -63,7 +66,6 @@ jobs:
             assert.equal(saved.updatedAt, resetAt + 10, `File ${slot} did not round-trip to its own key`);
           }
           JS
-      - run: npm ci
       - run: npm run build:single
       - name: Stage the standalone game
         run: install -Dm644 dist-single/index.html "$RUNNER_TEMP/guest-site/index.html"
