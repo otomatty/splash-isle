@@ -77,6 +77,8 @@ export class Game {
   private save!: SaveData;
   private user: User | null = null;
   private saveDirty = false;
+  private cloudDirty = false;
+  private savedPlayMs = 0;
   private saveTimer = 0;
   private time = 0;
   private last = performance.now();
@@ -85,7 +87,7 @@ export class Game {
   private comboT = 0;
   private cleanSoundT = 0;
   private hintT = 0;
-  private cut: { kind: 'gem' | 'reveal' | 'faint' | 'look'; id: number; t: number; dur: number; angle: number; at?: THREE.Vector3 } | null = null;
+  private cut: { kind: 'gem' | 'reveal' | 'faint' | 'look'; id: number; t: number; dur: number; angle: number; at?: THREE.Vector3; newBest?: boolean } | null = null;
   private wasLocked = false;
   private readonly tmp = new THREE.Vector3();
 
@@ -355,7 +357,7 @@ export class Game {
 
   // ───────────────────────── セーブ ─────────────────────────
   private markDirty(): void {
-    this.saveDirty = true;
+    this.cloudDirty = this.saveDirty = true;
   }
 
   private collectSave(): void {
@@ -365,14 +367,20 @@ export class Game {
     const lo = area.shellBase, hi = lo + area.shells.length;
     this.save.shells = [...this.save.shells.filter((i) => i < lo || i >= hi), ...items.shellList];
     if (this.cur === this.town) this.save.stars = items.starBits;
-    this.save.updatedAt = Date.now();
+    this.save.updatedAt = Math.max(Date.now(), this.save.updatedAt);
   }
 
   private flushSave(cloud: boolean): void {
     if (this.mode === 'idle') return;
+    const playMs = Math.floor(this.save.playMs);
+    const upload = cloud && this.cloudDirty;
+    if (!this.saveDirty && !upload && playMs === this.savedPlayMs) return;
     this.collectSave();
-    this.callbacks.onSave({ ...this.save, shells: [...this.save.shells] }, cloud);
+    // 時間だけ進んでポーズした場合は端末に記録し、収集・クリア時にクラウドにも送る。
+    this.callbacks.onSave({ ...this.save, playMs, shells: [...this.save.shells] }, upload);
+    this.savedPlayMs = playMs;
     this.saveDirty = false;
+    if (upload) this.cloudDirty = false;
   }
 
   /** セーブデータの内容を町に反映する */
@@ -416,7 +424,8 @@ export class Game {
     this.particles.update(100, this.cur.area.goop, this.cur.area.colliders);
     this.hud.setBubble(null, '', null, this.gfx.camera);
     this.time = 0;
-    this.saveDirty = false;
+    this.saveDirty = this.cloudDirty = false;
+    this.savedPlayMs = Math.floor(save.playMs);
     this.saveTimer = this.combo = this.comboT = this.cleanSoundT = 0;
     this.pendingJump = false;
     this.hintT = 14;
@@ -430,8 +439,15 @@ export class Game {
     this.hud.show(true);
     this.mode = 'playing';
     this.input.enabled = true;
-    this.gfx.canvas.focus();
-    if (this.input.device === 'keyboard' && matchMedia('(pointer: fine)').matches && navigator.userActivation?.isActive) this.input.requestLock();
+    // 旧版では最後の石の演出中に閉じると、クリアタイムだけが保存されなかった。
+    if (this.save.gems === ALL_GEMS && this.save.bestMs === null) {
+      const newBest = this.recordClearTime();
+      this.flushSave(true);
+      this.finishGame(newBest);
+    } else {
+      this.gfx.canvas.focus();
+      if (this.input.device === 'keyboard' && matchMedia('(pointer: fine)').matches && navigator.userActivation?.isActive) this.input.requestLock();
+    }
     this.last = performance.now();
     this.frameId = requestAnimationFrame(this.tick);
   }
@@ -734,11 +750,21 @@ export class Game {
     const m = this.cur.area.missions.find((x) => x.gem === id);
     $('gemSub').textContent = `${m?.title ?? ''}　${n}/${GEM_COUNT}${first ? '' : '（取得ずみ）'}`;
     $('gemGet').classList.remove('hidden');
-    this.cut = { kind: 'gem', id, t: 0, dur: 3.4, angle: this.player.yaw + 0.5 };
+    const cleared = first && this.save.gems === ALL_GEMS;
+    const newBest = cleared && this.recordClearTime();
+    this.cut = { kind: 'gem', id, t: 0, dur: 3.4, angle: this.player.yaw + 0.5, newBest };
     this.mode = 'cutscene';
     this.player.frozen = true;
     this.player.invuln = 0;
-    this.flushSave(false);
+    this.flushSave(cleared);
+  }
+
+  private recordClearTime(): boolean {
+    const time = Math.max(1, Math.round(this.save.playMs));
+    if (this.save.bestMs !== null && this.save.bestMs <= time) return false;
+    this.save.bestMs = time;
+    this.markDirty();
+    return true;
   }
 
   private endCutscene(): void {
@@ -752,10 +778,10 @@ export class Game {
       if (this.stage) {
         // ステージのヒカリ石を取ったら町へ戻る
         this.mode = 'playing';
-        this.enterArea('town', 0, all ? () => this.finishGame() : undefined);
+        this.enterArea('town', 0, all ? () => this.finishGame(cut.newBest === true) : undefined);
         return;
       }
-      if (all) { this.finishGame(); return; }
+      if (all) { this.finishGame(cut.newBest === true); return; }
       // 町でヒカリ石が増えたら、あたらしい異変が起きるか確かめる
       const appeared = this.town.portals?.sync(bitCount(this.save.gems), this.save.portals) ?? [];
       if (appeared.length) { this.announcePortal(appeared[0]); return; }
@@ -772,12 +798,9 @@ export class Game {
     this.mode = 'playing';
   }
 
-  private finishGame(): void {
+  private finishGame(newBest: boolean): void {
     const s = this.save;
     const time = Math.round(s.playMs);
-    const newBest = s.bestMs === null || time < s.bestMs;
-    if (newBest) s.bestMs = time;
-    this.flushSave(true);
     this.mode = 'ending';
     this.input.enabled = false;
     this.hud.show(false);
@@ -868,7 +891,7 @@ export class Game {
         if (this.save.gems !== ALL_GEMS) this.save.playMs += dt * 1000;
         this.cam.update(dt, b.x, b.y, b.z, b.vx, b.vz, input.lookX, input.lookY, input.zoom, input.device !== 'keyboard');
         player.aimPitch = clamp(0.2 - (this.cam.pitch - 0.3) * 0.95, -0.55, 0.85);
-        this.checkObjectives();
+        if (this.mode === 'playing') this.checkObjectives();
         if (entered && this.mode === 'playing') this.openEpisodes(entered.area as StageKey);
         if (player.hp <= 0 && !this.cut && this.mode === 'playing') {
           this.cut = { kind: 'faint', id: 0, t: 0, dur: 1.5, angle: 0 };

@@ -13,6 +13,7 @@ import { beginLogin, finishLogin, loginAvailable } from './auth';
 import { clearCookie, cookieNames, currentUser, destroySession, type SessionUser } from './session';
 import { HttpError, json, readJson } from './http';
 import { GEMS_ALL, parseSave } from './save';
+import { compareRuns, mergeSaves, type SaveData } from '../src/game/save-data';
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -47,6 +48,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {
+    const owner = request.headers.get('X-Splash-Owner');
+    if (!owner) throw new HttpError(428, 'owner_required');
+    const user = await currentUser(request, env);
+    if (user?.id !== owner) throw new HttpError(409, 'account_changed');
     await destroySession(request, env);
     return json({ ok: true }, 200, { 'Set-Cookie': clearCookie(cookieNames(url).session, url) });
   }
@@ -58,41 +63,68 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
     if (!user) throw new HttpError(401, 'not_signed_in');
     const owner = request.headers.get('X-Splash-Owner');
     if (owner !== null && owner !== user.id) throw new HttpError(409, 'account_changed');
-    if (method === 'GET') {
+    const latest = async () => {
       const select = slot === 'A'
-        ? env.DB.prepare('SELECT data FROM saves WHERE user_id = ?').bind(user.id)
-        : env.DB.prepare('SELECT data FROM save_slots WHERE user_id = ? AND slot = ?').bind(user.id, slot);
-      const row = await select.first<{ data: string }>();
-      return json({ save: row ? (JSON.parse(row.data) as unknown) : null });
-    }
+        ? env.DB.prepare('SELECT data, revision FROM saves WHERE user_id = ?').bind(user.id)
+        : env.DB.prepare('SELECT data, revision FROM save_slots WHERE user_id = ? AND slot = ?').bind(user.id, slot);
+      const row = await select.first<{ data: string; revision: number }>();
+      if (!row) return { save: null, revision: 0 };
+      const save = parseSave(JSON.parse(row.data));
+      if (!save) throw new HttpError(500, 'invalid_stored_save');
+      return { save, revision: row.revision };
+    };
+    if (method === 'GET') return json(await latest());
     if (method === 'PUT') {
-      const body = await readJson(request, 16 * 1024);
-      const save = parseSave((body as { save?: unknown } | null)?.save);
+      const body = await readJson(request, 16 * 1024) as { save?: unknown; revision?: unknown } | null;
+      const save = parseSave(body?.save);
       if (!save) throw new HttpError(400, 'invalid_save');
+      const revision = body?.revision;
+      if (revision !== undefined && (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0)) {
+        throw new HttpError(400, 'invalid_revision');
+      }
       // ランキングに載せるのは、全クリア済みで現実的なタイムだけ
       const best = save.gems === GEMS_ALL && save.bestMs !== null && save.bestMs >= 60_000 ? save.bestMs : null;
-      const now = Date.now();
-      // やり直し前や別タブから遅れて届いた保存は、新しい世代・時刻の冒険を巻き戻さない。
       const table = slot === 'A' ? 'saves' : 'save_slots';
       const columns = slot === 'A' ? 'user_id' : 'user_id, slot';
       const values = slot === 'A' ? '?1' : '?1, ?6';
-      const version = (row: string) => `(COALESCE(json_extract(${row}.data, '$.resetAt'), 0), COALESCE(json_extract(${row}.data, '$.updatedAt'), 0))`;
-      const fresh = `${version('excluded')} >= ${version(table)}`;
-      const stmt = env.DB.prepare(
-        `INSERT INTO ${table} (${columns}, data, gems, best_time_ms, updated_at) VALUES (${values}, ?2, ?3, ?4, ?5)
-         ON CONFLICT(${columns}) DO UPDATE SET
-           data = CASE WHEN ${fresh} THEN excluded.data ELSE ${table}.data END,
-           gems = CASE WHEN ${fresh} THEN excluded.gems ELSE ${table}.gems END,
-           best_time_ms = CASE
-             WHEN excluded.best_time_ms IS NULL THEN ${table}.best_time_ms
-             WHEN ${table}.best_time_ms IS NULL THEN excluded.best_time_ms
-             ELSE MIN(${table}.best_time_ms, excluded.best_time_ms) END,
-           updated_at = CASE WHEN ${fresh} THEN excluded.updated_at ELSE ${table}.updated_at END`,
-      );
-      const args = [user.id, JSON.stringify(save), save.gems, best, now];
-      if (slot !== 'A') args.push(slot);
-      await stmt.bind(...args).run();
-      return json({ ok: true });
+      const key = slot === 'A' ? 'user_id = ?1' : 'user_id = ?1 AND slot = ?6';
+      const write = async (next: SaveData, expected: number) => {
+        const args = [user.id, JSON.stringify(next), next.gems, best, Date.now()];
+        if (slot !== 'A') args.push(slot);
+        const query = expected === 0
+          ? `INSERT INTO ${table} (${columns}, data, gems, best_time_ms, updated_at)
+             VALUES (${values}, ?2, ?3, ?4, ?5) ON CONFLICT(${columns}) DO NOTHING RETURNING revision`
+          : `UPDATE ${table} SET
+               data = CASE WHEN json_extract(data, '$.bestMs') > 0 AND
+                    (json_extract(?2, '$.bestMs') IS NULL OR json_extract(data, '$.bestMs') < json_extract(?2, '$.bestMs'))
+                  THEN json_set(?2, '$.bestMs', json_extract(data, '$.bestMs')) ELSE ?2 END,
+               gems = ?3, updated_at = ?5, revision = revision + 1,
+               best_time_ms = CASE WHEN ?4 IS NULL THEN best_time_ms WHEN best_time_ms IS NULL THEN ?4
+                                   ELSE MIN(best_time_ms, ?4) END
+             WHERE ${key} AND revision = ?${args.length + 1}
+               AND (COALESCE(json_extract(data, '$.resetAt'), 0), length(COALESCE(json_extract(data, '$.runId'), '')),
+                    COALESCE(json_extract(data, '$.runId'), ''))
+                <= (json_extract(?2, '$.resetAt'), length(COALESCE(json_extract(?2, '$.runId'), '')),
+                    COALESCE(json_extract(?2, '$.runId'), ''))
+             RETURNING revision`;
+        if (expected !== 0) args.push(expected);
+        const row = await env.DB.prepare(query).bind(...args).first<{ revision: number }>();
+        return row ? json({ ok: true, revision: row.revision }) : null;
+      };
+      if (revision !== undefined) {
+        const result = await write(save, revision);
+        return result ?? json({ error: 'save_conflict', ...await latest() }, 409);
+      }
+      // 旧クライアントは版を送らない。サーバーで同じ冒険の収集物を合わせ、読んだ版にだけ保存する。
+      let current = await latest();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (current.save && compareRuns(current.save, save) > 0) break;
+        const next = current.save ? mergeSaves(current.save, save) : save;
+        const result = await write(next, current.revision);
+        if (result) return result;
+        current = await latest();
+      }
+      return json({ error: 'save_conflict', ...current }, 409);
     }
     throw new HttpError(405, 'method_not_allowed');
   }

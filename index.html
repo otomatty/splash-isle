@@ -107,6 +107,7 @@
             </div>
             <div class="file-actions"><button type="button" class="shore-action action-play" id="btnPlay">あそぶ</button><button type="button" class="reset-slot hidden" id="btnNew">はじめから</button></div>
             <p id="menuStatus" class="shore-note" role="status"></p>
+            <button type="button" class="reset-slot legacy-import-link hidden" id="btnImportLegacy">この端末の旧セーブをファイルAに取り込む</button>
           </main>
           <nav class="shore-nav" aria-label="ゲームメニュー">
             <button type="button" id="btnRank"><svg aria-hidden="true"><use href="#nav-rank"/></svg>ランキング</button>
@@ -115,6 +116,19 @@
           </nav>
         </div>
       </section>
+
+      <dialog id="legacyImportDialog" class="restart-dialog legacy-dialog" aria-labelledby="legacyImportHeading" aria-describedby="legacyImportOwner">
+        <h2 id="legacyImportHeading">旧セーブを取り込む？</h2>
+        <p id="legacyImportOwner"></p>
+        <table aria-label="取り込む前の冒険の記録">
+          <thead><tr><th scope="col">記録</th><th scope="col">ファイルA</th><th scope="col">端末の旧セーブ</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p>集めたものと開いた入口は両方の記録を合わせます。プレイ時間は長い方、ベストタイムは速い方を残します。元の旧セーブはこの端末に残ります。</p>
+        <p id="legacyImportError" role="alert"></p>
+        <button type="button" id="cancelImportLegacy">もどる</button>
+        <button type="button" id="confirmImportLegacy">Aに取り込む</button>
+      </dialog>
 
       <!-- ポーズ -->
       <div id="pause" class="screen dim hidden">

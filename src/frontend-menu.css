@@ -187,3 +187,19 @@
 }
 .shore-screen .slot-tile:focus-visible { outline: 0; }
 .slot-tile:focus-visible .slot-ticket { outline: 3px solid #123f49; outline-offset: 4px; }
+.legacy-import-link { margin-top: 7px; }
+.legacy-dialog { width: min(30rem, 95vw); max-height: 90dvh; overflow: auto; }
+.legacy-dialog table { width: 100%; border-collapse: collapse; font-size: .87rem; font-variant-numeric: tabular-nums; }
+.legacy-dialog th, .legacy-dialog td { padding: .35rem .25rem; border-bottom: 1px solid #b2a884; }
+.legacy-dialog thead { color: #16494b; background: #e5e9cd; }
+.legacy-dialog th[scope='row'] { text-align: left; }
+.legacy-dialog p { margin: .8rem 0; font-size: .9rem; line-height: 1.6; overflow-wrap: anywhere; }
+#legacyImportError { color: #8a3525; font-weight: 700; }
+#legacyImportError:empty { display: none; }
+@media (max-width: 420px) {
+  .restart-dialog.legacy-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 20px); padding: 14px 12px; }
+  .legacy-dialog table { font-size: .8rem; line-height: 1.35; }
+  .legacy-dialog th, .legacy-dialog td { padding: .3rem .18rem; }
+  .legacy-dialog th { white-space: nowrap; }
+  .restart-dialog.legacy-dialog p { margin: .65rem 0; font-size: .82rem; line-height: 1.5; }
+}

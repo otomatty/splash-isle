@@ -1,6 +1,7 @@
-import { ALL_GEMS, GEM_COUNT, SLOT_IDS, hasAdventure, loadLocal, mergeSaves, restartSave, saveLocal, type SaveData, type SaveSlot } from './game/state';
-import { api, STANDALONE, type User } from './net/api';
+import { ALL_GEMS, GEM_COUNT, SLOT_IDS, compareRuns, hasAdventure, loadLocal, mergeSaves, restartSave, sameSave, saveLocal, type SaveData, type SaveSlot } from './game/state';
+import { ACCOUNT_CHANGED, api, STANDALONE, type SlotSnapshot, type User } from './net/api';
 import { Panels } from './front/panels';
+import { offerLegacyImport } from './front/legacy-import';
 import { installMenuGamepad } from './front/menu-gamepad';
 import { showPrologue } from './front/story';
 import type { Game } from './gameplay';
@@ -18,8 +19,10 @@ let selected: SaveSlot = 'A';
 let playing: SaveSlot | null = null;
 let fetching = false;
 let signingOut = false;
+let accountChanged = false;
 let visit = 0;
 const files = new Map<SaveSlot, SaveData>();
+const cloud = new Map<SaveSlot, SlotSnapshot>();
 const pending = new Map<SaveSlot, Promise<void>>();
 const failedReads = new Set<SaveSlot>();
 const failedWrites = new Set<SaveSlot>();
@@ -42,19 +45,19 @@ function status(message = ''): void {
   const note = el('menuStatus');
   note.replaceChildren(message);
   if (message || fetching || signingOut) return;
-  if (failedReads.size || failedWrites.size) {
-    note.textContent = failedReads.size ? '一部のファイルを読み込めませんでした。' : '記録はこの端末に保存しました。クラウドと同期できていません。';
+  if (accountChanged || failedReads.size || failedWrites.size) {
+    note.textContent = accountChanged ? 'ログイン状態が変わりました。現在のアカウントを確認してください。' : failedReads.size ? '一部のファイルを読み込めませんでした。' : '記録はこの端末に保存しました。クラウドと同期できていません。';
     const retry = document.createElement('button');
     retry.id = 'retrySaves';
-    retry.textContent = 'もう一度同期';
-    retry.onclick = () => void refreshFiles();
+    retry.textContent = accountChanged ? 'アカウントを確認' : 'もう一度同期';
+    retry.onclick = () => { if (accountChanged) void recheckAccount(); else void refreshFiles(); };
     note.append(' ', retry);
   }
 }
 
 function renderFiles(): void {
   const saved = files.get(selected);
-  const ready = !fetching && !signingOut && saved !== undefined && !failedReads.has(selected);
+  const ready = !fetching && !signingOut && !accountChanged && saved !== undefined && !failedReads.has(selected);
   for (const slot of SLOT_IDS) {
     const tile = button('slot' + slot);
     const data = files.get(slot);
@@ -72,30 +75,81 @@ function renderFiles(): void {
   button('btnPlay').textContent = saved && hasAdventure(saved) ? 'つづきから' : 'はじめから';
   button('btnNew').classList.toggle('hidden', !(ready && hasAdventure(saved)));
   button('btnRank').classList.toggle('hidden', !canRank());
+  const owner = user, session = visit;
+  const currentA = screen === 'files' && !accountChanged && !fetching && !signingOut && !failedReads.has('A') ? files.get('A') : undefined;
+  offerLegacyImport(owner, currentA, legacy => {
+    const current = files.get('A');
+    if (!owner || visit !== session || !current || screen !== 'files' || fetching || signingOut || failedReads.has('A')) return false;
+    // 明示して選んだ旧記録だけを、今のファイルAの冒険へ取り込む。
+    const latest = mergeSaves(current, loadLocal('A', owner.id));
+    if (!currentA || compareRuns(latest, currentA) !== 0) return false;
+    const merged = mergeSaves(latest, { ...legacy, resetAt: latest.resetAt, runId: latest.runId });
+    if (!saveLocal(merged, 'A', owner.id)) return false;
+    files.set('A', merged);
+    selected = 'A';
+    queueUpload('A');
+    renderFiles();
+    return true;
+  });
 }
 
-function queueUpload(slot: SaveSlot, data: SaveData): void {
-  if (!user || failedReads.has(slot)) return;
+function needsUpload(local: SaveData, remote: SaveData | null): boolean {
+  return remote ? !sameSave(local, remote) : hasAdventure(local) || local.bestMs !== null || local.resetAt !== 0;
+}
+
+/** メモリと同じ所有者の端末記録を両方見る。別タブの確定した記録も巻き戻さない。 */
+function currentFile(slot: SaveSlot): SaveData {
+  const disk = loadLocal(slot, user?.id);
+  const cached = files.get(slot);
+  return cached ? mergeSaves(disk, cached) : disk;
+}
+
+function queueUpload(slot: SaveSlot): void {
+  if (!user || accountChanged || failedReads.has(slot) || pending.has(slot)) return;
   const session = visit;
   const owner = user.id;
-  const upload = (pending.get(slot) ?? Promise.resolve()).then(async () => {
-    if (visit !== session) return;
-    const ok = await api.putSave(data, slot, owner);
-    if (visit !== session) return;
-    if (ok) failedWrites.delete(slot);
-    else failedWrites.add(slot);
-    if (screen === 'files') status();
+  const upload = async () => {
+    let conflicts = 0;
+    while (session === visit && !accountChanged) {
+      const remote = cloud.get(slot);
+      const desired = files.get(slot);
+      if (!remote || !desired) return;
+      if (!needsUpload(desired, remote.save)) {
+        failedWrites.delete(slot);
+        return;
+      }
+      const result = await api.putSave(desired, slot, owner, remote.revision);
+      if (session !== visit) return;
+      if (result === ACCOUNT_CHANGED) { accountChanged = true; return; }
+      if (!result) { failedWrites.add(slot); return; }
+      if (result.ok) {
+        cloud.set(slot, { save: desired, revision: result.revision });
+        failedWrites.delete(slot);
+      } else {
+        cloud.set(slot, { save: result.save, revision: result.revision });
+        const local = currentFile(slot);
+        const merged = result.save ? mergeSaves(local, result.save) : local;
+        files.set(slot, merged);
+        saveLocal(merged, slot, owner);
+        // 複数の端末が保存を続ける場合はいったん止め、最新の統合結果を再試行に残す。
+        if (++conflicts >= 4 && needsUpload(merged, result.save)) { failedWrites.add(slot); return; }
+      }
+    }
+  };
+  const task = upload();
+  pending.set(slot, task);
+  void task.then(() => {
+    if (pending.get(slot) === task) pending.delete(slot);
+    if (session === visit && screen === 'files') { renderFiles(); status(); }
   });
-  pending.set(slot, upload);
-  void upload.then(() => { if (pending.get(slot) === upload) pending.delete(slot); });
 }
 
 function record(save: SaveData, sync: boolean): void {
   if (!playing) return;
-  const snapshot = { ...save, shells: [...save.shells] };
-  files.set(playing, snapshot);
-  saveLocal(snapshot, playing, user?.id);
-  if (sync) queueUpload(playing, snapshot);
+  const merged = mergeSaves(currentFile(playing), save);
+  files.set(playing, merged);
+  saveLocal(merged, playing, user?.id);
+  if (sync) queueUpload(playing);
 }
 
 function enterMenu(message = ''): void {
@@ -106,55 +160,100 @@ function enterMenu(message = ''): void {
   button('slot' + selected).focus();
 }
 
+async function readFile(slot: SaveSlot): Promise<SaveData | null> {
+  const session = visit, owner = user?.id;
+  await pending.get(slot);
+  if (session !== visit) return null;
+  const remote = owner ? await api.readSlot(slot, owner) : null;
+  if (session !== visit) return null;
+  if (remote === ACCOUNT_CHANGED) { accountChanged = true; return null; }
+  if (owner && !remote) { failedReads.add(slot); return null; }
+  failedReads.delete(slot);
+  const local = currentFile(slot);
+  const merged = remote?.save ? mergeSaves(local, remote.save) : local;
+  files.set(slot, merged);
+  if (remote) {
+    cloud.set(slot, remote);
+    if (remote.save || needsUpload(merged, null)) saveLocal(merged, slot, owner);
+    if (needsUpload(merged, remote.save)) queueUpload(slot);
+    else failedWrites.delete(slot);
+  }
+  return merged;
+}
+
 async function refreshFiles(): Promise<void> {
-  if (fetching || signingOut) return;
+  if (accountChanged || fetching || signingOut) return;
   fetching = true;
   const session = visit;
-  const owner = user?.id;
   renderFiles();
   status('冒険の記録をよみこんでいます…');
-  await Promise.all(SLOT_IDS.map(async (slot) => {
-    await pending.get(slot);
-    if (session !== visit) return;
-    const local = files.get(slot) ?? loadLocal(slot, owner);
-    if (!owner) { files.set(slot, local); return; }
-    const remote = await api.readSlot(slot, owner);
-    if (session !== visit) return;
-    if (!remote) { failedReads.add(slot); return; }
-    failedReads.delete(slot);
-    const merged = remote.save ? mergeSaves(local, remote.save) : local;
-    files.set(slot, merged);
-    if (!hasAdventure(merged) && !merged.bestMs && !merged.resetAt) return;
-    saveLocal(merged, slot, owner);
-    if (JSON.stringify(remote.save) !== JSON.stringify(merged)) queueUpload(slot, merged);
-    else failedWrites.delete(slot);
-  }));
+  await Promise.all(SLOT_IDS.map(readFile));
   if (session !== visit) return;
   fetching = false;
   renderFiles();
   status();
 }
 
-async function exitAccount(): Promise<void> {
-  if (fetching || signingOut || screen !== 'files') return;
-  signingOut = true;
-  button('exitAccount').disabled = true;
-  renderFiles();
-  await Promise.all(pending.values());
-  if (user && !await api.logout()) {
-    signingOut = false;
-    button('exitAccount').disabled = false;
-    renderFiles();
-    status('ログアウトできませんでした。通信状態を確認してもう一度お試しください。');
-    return;
-  }
+function leaveAccount(): void {
+  // 前のアカウントの応答は visit で切り離し、送信待ちや版番号を次のアカウントに渡さない。
   visit++;
-  signingOut = fetching = false;
+  signingOut = fetching = accountChanged = false;
+  playing = null;
   user = null;
   files.clear();
+  cloud.clear();
+  pending.clear();
   failedReads.clear();
   failedWrites.clear();
+  el('account').replaceChildren();
+  offerLegacyImport(null, undefined, () => false);
   show('login');
+}
+
+async function recheckAccount(): Promise<void> {
+  if (fetching || signingOut || screen !== 'files') return;
+  const session = ++visit;
+  pending.clear(); // 照合の前に送った要求は、同じユーザーに戻っていても反映しない。
+  fetching = true;
+  renderFiles();
+  status('現在のアカウントを確認しています…');
+  const actual = await api.me();
+  if (session !== visit) return;
+  fetching = false;
+  if (!actual.available) { renderFiles(); status(); return; }
+  if (actual.user && actual.user.id === user?.id) {
+    accountChanged = false;
+    await refreshFiles();
+    return;
+  }
+  leaveAccount();
+  displaySession(actual);
+}
+
+async function exitAccount(): Promise<void> {
+  if (fetching || signingOut || screen !== 'files') return;
+  const session = visit;
+  signingOut = true;
+  renderFiles();
+  await Promise.all(pending.values());
+  if (session !== visit) return;
+  if (user) {
+    const result = await api.logout(user.id);
+    if (session !== visit) return;
+    if (result === ACCOUNT_CHANGED) {
+      accountChanged = true;
+      signingOut = false;
+      await recheckAccount();
+      return;
+    }
+    if (!result) {
+      signingOut = false;
+      renderFiles();
+      status('ログアウトできませんでした。通信状態を確認してもう一度お試しください。');
+      return;
+    }
+  }
+  leaveAccount();
   void checkSession();
 }
 
@@ -180,7 +279,12 @@ async function checkSession(): Promise<void> {
     action.classList.add('hidden');
   }
   el('loginNote').textContent = 'ログイン状態を確認しています…';
+  const generation = visit;
   const session = await api.me();
+  if (generation === visit) displaySession(session);
+}
+
+function displaySession(session: Awaited<ReturnType<typeof api.me>>): void {
   online = session.available;
   loginAvailable = session.loginAvailable;
   if (session.user) { openFiles(session.user); return; }
@@ -201,12 +305,17 @@ async function checkSession(): Promise<void> {
   (loginAvailable ? login : guest).focus({ preventScroll: true });
 }
 
-async function land(slot: SaveSlot, fresh: boolean): Promise<void> {
-  const previous = files.get(slot);
-  if (!previous || (screen !== 'story' && screen !== 'files')) return;
+async function land(slot: SaveSlot, firstPage?: SaveData): Promise<void> {
+  if (screen !== 'story' && screen !== 'files') return;
   show('loading');
   el('loadingText').textContent = '島を読み込んでいます…';
   try {
+    const previous = await readFile(slot);
+    if (!previous) { enterMenu(); return; }
+    if (firstPage && (compareRuns(firstPage, previous) !== 0 || (!hasAdventure(firstPage) && hasAdventure(previous)))) {
+      enterMenu('ほかの端末でファイルが更新されました。もう一度選んでください。');
+      return;
+    }
     if (!game) {
       const { Game } = await import('./gameplay');
       const instance = new Game(canvas, {
@@ -216,13 +325,13 @@ async function land(slot: SaveSlot, fresh: boolean): Promise<void> {
       await instance.init();
       game = instance;
     }
-    const save = fresh && hasAdventure(previous) ? restartSave(previous) : { ...previous };
-    if (fresh) { save.introComplete = true; save.updatedAt = Math.max(Date.now(), save.resetAt); }
+    const save = firstPage && hasAdventure(previous) ? restartSave(previous) : { ...previous };
+    if (firstPage) { save.introComplete = true; save.updatedAt = Math.max(Date.now(), save.resetAt); }
     playing = slot;
     show('game');
     game.startAdventure(save, user);
     if (new URLSearchParams(location.search).has('debug')) game.expose();
-    if (fresh) record(save, true);
+    if (firstPage) record(save, true);
   } catch (error) {
     console.error(error);
     enterMenu('島を表示できませんでした。WebGL が使えるブラウザで、もう一度お試しください。');
@@ -231,8 +340,10 @@ async function land(slot: SaveSlot, fresh: boolean): Promise<void> {
 
 function story(): void {
   const slot = selected;
+  const firstPage = files.get(slot);
+  if (!firstPage) return;
   show('story');
-  showPrologue(() => void land(slot, true), () => enterMenu());
+  showPrologue(() => void land(slot, firstPage), () => enterMenu());
 }
 
 function confirmRestart(): void {
@@ -278,7 +389,7 @@ for (const [i, slot] of SLOT_IDS.entries()) {
 button('btnPlay').onclick = () => {
   const save = files.get(selected);
   if (!save || button('btnPlay').disabled) return;
-  if (hasAdventure(save)) void land(selected, false);
+  if (hasAdventure(save)) void land(selected);
   else story();
 };
 button('btnNew').onclick = confirmRestart;

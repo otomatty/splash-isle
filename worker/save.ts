@@ -1,17 +1,4 @@
-/** クライアントから届いたセーブデータを検証して、決まった形だけを通す */
-export interface SaveData {
-  v: 1;
-  gems: number;
-  revealed: number;
-  shells: number[];
-  stars: number;
-  portals: number;
-  playMs: number;
-  bestMs: number | null;
-  introComplete: boolean;
-  resetAt: number;
-  updatedAt: number;
-}
+import { validRunId, type SaveData } from '../src/game/save-data';
 
 /** ヒカリ石14個ぶんのビット列の最大値 */
 export const GEMS_ALL = (1 << 14) - 1;
@@ -40,5 +27,8 @@ export function parseSave(raw: unknown): SaveData | null {
     shells.length > 0 || r.stars !== 0 || portals !== 0 || bestMs !== null);
   const resetAt = r.resetAt === undefined ? 0 : r.resetAt;
   if (!isInt(resetAt, 0, Number.MAX_SAFE_INTEGER)) return null;
-  return { v: 1, gems: r.gems, revealed: r.revealed, shells, stars: r.stars, portals, playMs, bestMs, introComplete, resetAt, updatedAt };
+  const runId = r.runId;
+  if (runId !== undefined && (resetAt === 0 || !validRunId(runId))) return null;
+  return { v: 1, gems: r.gems, revealed: r.revealed, shells, stars: r.stars, portals, playMs, bestMs,
+    introComplete, resetAt, ...(runId === undefined ? {} : { runId }), updatedAt };
 }

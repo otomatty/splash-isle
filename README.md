@@ -13,7 +13,9 @@
 
 Googleでログインすると、砂浜に貝がら・灯台・帆船が並ぶファイル選択画面が開きます。A・B・Cから冒険の記録を選べます。空きファイルではプカの船旅を描いた3ページのプロローグが始まり、最後の「島へ上陸する」で3Dの町に入ります。途中でファイル選択へ戻ることもできます。
 
-以前のセーブはファイルAの「つづきから」で再開できます。ログイン中の記録はアカウントごとに、ゲストの記録はこのブラウザに保存されます。
+以前のクラウドセーブはファイルAの「つづきから」で再開できます。旧版でこの端末だけに残った記録がある場合は、ログイン後にファイルAを選び、「この端末の旧セーブをファイルAに取り込む」から現在の記録と見比べて取り込めます。元の記録は端末に残ります。
+
+ログイン中の記録はアカウントごとに保存します。複数の端末で同じ冒険を進めた場合は、それぞれで集めたヒカリ石や貝がらを引き継ぎます。「はじめから」でやり直した冒険には、以前の冒険の収集物は戻りません。ゲストの記録は遊んだブラウザに保存されます。
 
 | 操作 | キーボード＋マウス | ゲームパッド | タッチ |
 |---|---|---|---|
@@ -104,7 +106,7 @@ npm run preview            # ビルドして http://localhost:8787 で起動
    ```
 
    `wrangler.jsonc` で `GOOGLE_CLIENT_SECRET` を必須にしているため、初回はシークレットを一緒に送らないとデプロイが止まります。
-   2 回目以降も、新しいマイグレーションがある場合は `npm run db:migrate` を適用してから `npm run deploy` を実行します。冒険ファイルB・Cは `0002_save_slots.sql` を使用します。シークレットを入れ替えるときは `npx wrangler secret put GOOGLE_CLIENT_SECRET` を使います。
+   2 回目以降も、新しいマイグレーションがある場合は `npm run db:migrate` を適用してから `npm run deploy` を実行します。冒険ファイルB・Cには `0002_save_slots.sql`、複数端末の同時保存には `0003_save_revisions.sql` が必要です。シークレットを入れ替えるときは `npx wrangler secret put GOOGLE_CLIENT_SECRET` を使います。
 
    独自ドメインを使う場合は `wrangler.jsonc` に `routes`（`custom_domain: true`）を追加し、手順 3 のリダイレクト URI も合わせます。
 
@@ -153,7 +155,14 @@ scripts/              開発用の自動テスト
 ```bash
 npm run test:worker     # API と Google ログインの結合テスト（Google のエンドポイントだけ偽物に差し替え）
 
-npm run build && npx vite preview --port 4173 &   # 以下のブラウザテストは Chrome が必要（CHROME=/path/to/chrome で指定可）
+npm run build
+npx vite preview --port 4173 --strictPort   # このターミナルで起動したままにする
+```
+
+別のターミナルでプレビューの応答を確認してからテストを実行します。Chrome の場所は `CHROME=/path/to/chrome` で指定できます。
+
+```bash
+curl --fail --retry 30 --retry-connrefused --retry-delay 1 -o /dev/null http://localhost:4173/ &&
 npm run test:menu       # ログイン・ファイル選択・プロローグと上陸の検証
 npm run test:game       # 入口を開ける → ステージ選択 → クリアで町へ戻る、を全14個ぶん通すテスト
 npm run test:reach      # 全エリアの足場・間欠泉・橋が実際に通れるかの検証
