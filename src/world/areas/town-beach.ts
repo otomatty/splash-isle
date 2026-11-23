@@ -93,20 +93,27 @@ function deckChairs(b: GeoBatch, detail: GeoBatch, c: Colliders): void {
     const y = heightAt(x, z), base = M(x, y, z, yaw);
     b.setBase(base);
     detail.setBase(base);
-    const recline = 0.75;
+    const recline = 0.75, backY = 0.68, backZ = -0.80, backLength = 1.04, backThickness = 0.085;
     for (const dx of [-0.41, 0.41]) {
       b.add(box(0.09, 0.14, 1.64), WOOD, M(dx, 0.29, 0.25));
       b.add(box(0.09, 0.12, 1.02), HONEY, M(dx, 0.64, -0.80, 0, 1, 1, 1, recline));
       for (const dz of [-0.60, 0.88]) b.add(box(0.11, 0.49, 0.13), WOOD, M(dx, 0.11, dz));
     }
     b.add(box(0.78, 0.08, 1.62), color, M(0, 0.33, 0.24));
-    const back = M(0, 0.68, -0.80, 0, 1, 1, 1, recline);
-    b.add(box(0.78, 0.085, 1.04), color, back);
+    const back = M(0, backY, backZ, 0, 1, 1, 1, recline);
+    b.add(box(0.78, backThickness, backLength), color, back);
     for (const dx of [-0.23, 0.23]) {
       detail.add(box(0.08, 0.025, 1.58), WHITE, M(dx, 0.374, 0.24));
       detail.add(box(0.08, 0.025, 1), WHITE, back.clone().multiply(M(dx, 0.052, 0)));
     }
     c.addBox(x, y + 0.14, z, 0.9, 0.44, 2.1, yaw);
+    // 傾いた帆布を三枚に分け、各片の縦横の投影幅を椅子の向きに合わせる。
+    const sn = Math.sin(recline), cs = Math.cos(recline), piece = backLength / 3;
+    for (const along of [-piece, 0, piece]) {
+      const dz = backZ + along * cs;
+      c.addBox(x + Math.sin(yaw) * dz, y + backY - along * sn, z + Math.cos(yaw) * dz,
+        0.9, piece * sn + backThickness * cs, piece * cs + backThickness * sn, yaw);
+    }
   }
 }
 

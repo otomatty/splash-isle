@@ -107,7 +107,12 @@ export function dressPlateau(b: GeoBatch, fine: GeoBatch, c: Colliders): void {
   const spool = 2.0;
   for (const side of [-1, 1]) {
     b.add(box(0.19, 0.92, 1.12), CEDAR, M(spool + side * 0.59, 0.46, 0.96));
-    b.add(cyl(0.53, 0.53, 0.1, 12), END_GRAIN, M(spool + side * 0.51, 0.83, 0.96, 0, 1, 1, 1, 0, Math.PI / 2));
+    const rimX = spool + side * 0.51;
+    b.add(cyl(0.53, 0.53, 0.1, 12), END_GRAIN, M(rimX, 0.83, 0.96, 0, 1, 1, 1, 0, Math.PI / 2));
+    // 十二角形の外輪だけを段状に拾う。軸の中央には高さ1.36 mの足場を作らない。
+    for (const [top, depth] of [[1.20, 0.73], [1.31, 0.44], [1.36, 0.15]]) {
+      c.addBox(x + rimX, y + (1.04 + top) / 2, z + 0.96, 0.1, top - 1.04, depth);
+    }
   }
   b.add(cyl(0.37, 0.37, 1.04, 10), BRASS, M(spool, 0.83, 0.96, 0, 1, 1, 1, 0, Math.PI / 2));
   for (let i = -3; i <= 3; i++) fine.add(new THREE.TorusGeometry(0.37, 0.036, 4, 12), LINEN, M(spool + i * 0.13, 0.83, 0.96, Math.PI / 2));

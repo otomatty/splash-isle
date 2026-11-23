@@ -29,6 +29,11 @@ function coloredGeometry() {
     }
   }
 
+  function two(points: Point[], front: number, back = front): void {
+    face(points, front);
+    face([...points].reverse(), back, 0.86);
+  }
+
   function rect(cx: number, cy: number, z: number, w: number, h: number, color: number, lowerShade = 1): void {
     const x = cx - w / 2, y = cy - h / 2;
     face([[x, y, z], [x + w, y, z], [x + w, y + h, z], [x, y + h, z]], color, lowerShade);
@@ -62,14 +67,14 @@ function coloredGeometry() {
     g.computeBoundingSphere();
     return g;
   }
-  return { face, rect, ledge, wallSide, build };
+  return { face, two, rect, ledge, wallSide, build };
 }
 
 /** 間口8m・奥行6mの街区用住戸。+Zが表通り、屋上床は階数×2.8+0.30m。 */
 export function buildBlockFacade(style: number, floors: 2 | 3, family: number): THREE.BufferGeometry {
   const [wall, paint, tile] = COLORS[style][family];
   const roof = floors * 2.8 + 0.30;
-  const { face, rect, ledge, wallSide, build } = coloredGeometry();
+  const { face, two, rect, ledge, wallSide, build } = coloredGeometry();
 
   function arch(x: number, y: number, z: number, w: number, h: number, color: number): void {
     const r = w / 2, spring = y + h - r;
@@ -168,7 +173,7 @@ export function buildBlockFacade(style: number, floors: 2 | 3, family: number): 
       for (let i = 0; i < 9; i++) {
         const x = -3.57 + i * 0.79, x1 = x + 0.79;
         const stripe = i % 2 === 0 ? paint : LIMESTONE;
-        face([[x,2.36,0.40],[x1,2.36,0.40],[x1,2.76,0.008],[x,2.76,0.008]], stripe);
+        two([[x,2.36,0.40],[x1,2.36,0.40],[x1,2.76,0.008],[x,2.76,0.008]], stripe);
         face([[x,2.16,0.40],[x+0.39,2.10,0.40],[x1,2.16,0.40],[x1,2.36,0.40],[x,2.36,0.40]], stripe);
       }
     } else if (front && style === 1) {
@@ -361,15 +366,11 @@ export function buildDoorstepSet(style: number, family: number): THREE.BufferGeo
 
 /** 二・三階の窓辺。Y=0が窓台、Z=0が壁面。下の通りから見える布裏や屋根の軒裏も作る。 */
 export function buildUpperStorySet(kind: number, family: number): THREE.BufferGeometry {
-  const { face, rect, build } = coloredGeometry();
+  const { face, two, rect, build } = coloredGeometry();
   const [linen, dye, trim] = [
     [0xffe7b8, 0x507f87, 0xb76f59], [0xefdaba, 0xac635f, 0x637a65], [0xf7e5cb, 0x658369, 0x6b83a5],
   ][family];
   const bamboo = 0xb08d59, cord = 0x705b49;
-  function two(points: Point[], front: number, back = front): void {
-    face(points, front);
-    face([...points].reverse(), back, 0.86);
-  }
   // 棚受けの斜材は左右の妻と下面まで張り、窓の上の壁から水平な竿までを支える。
   function bracket(x: number, y: number, depth: number): void {
     const l = x - 0.047, r = x + 0.047;

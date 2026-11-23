@@ -274,15 +274,23 @@ function tallyOffice(b: GeoBatch, fine: GeoBatch, colliders: Colliders, x: numbe
     const gable = new THREE.ExtrudeGeometry(end, { depth: 0.14, bevelEnabled: false }).rotateY(Math.PI / 2);
     b.add(gable, ENAMEL, M(side * width / 2 - (side > 0 ? 0.14 : 0), eave - 0.03, 0));
   }
-  const ridge = 6.65, pitch = 0.28;
+  const ridge = 6.65, pitch = 0.28, panelDepth = 2.62, tileThickness = 0.13;
+  const panelZ = 1.24, panelY = ridge - 0.35, capDepth = 0.17;
+  const sn = Math.sin(pitch), cs = Math.cos(pitch);
+  const eaveZ = panelZ + (panelDepth * cs + tileThickness * sn) / 2;
+  const bands = 7, strip = (eaveZ - capDepth / 2) / bands, verticalThickness = tileThickness / cs;
   for (const side of [-1, 1]) {
-    b.add(box(8.45, 0.13, 2.62), 0x437e91, M(0, ridge - 0.35, side * 1.24, 0, 1, 1, 1, side * pitch), { top: 0x5c9aac });
-    fine.add(box(1.25, 0.05, 2.6), CREAM, M(1.95, ridge - 0.26, side * 1.24, 0, 1, 1, 1, side * pitch));
+    b.add(box(8.45, tileThickness, panelDepth), 0x437e91, M(0, panelY, side * panelZ, 0, 1, 1, 1, side * pitch), { top: 0x5c9aac });
+    fine.add(box(1.25, 0.05, 2.6), CREAM, M(1.95, ridge - 0.26, side * panelZ, 0, 1, 1, 1, side * pitch));
+    // 軒までの各帯を瓦の中心面に合わせ、棟と同じ高さの足場は金物の幅だけにする。
+    for (let i = 0; i < bands; i++) {
+      const dz = capDepth / 2 + (i + 0.5) * strip;
+      const cy = panelY + (panelZ - dz) * Math.tan(pitch);
+      colliders.addBox(x, y + cy, z + side * dz, 8.45, verticalThickness, strip);
+    }
   }
-  b.add(box(8.5, 0.14, 0.17), IRON, M(0, ridge + 0.03, 0));
-  for (const [dz, top] of [[0, ridge + 0.07], [-1.66, ridge - 0.39], [1.66, ridge - 0.39]]) {
-    colliders.addBox(x, y + top - 0.16, z + dz, 8.45, 0.32, 1.66);
-  }
+  b.add(box(8.5, 0.14, capDepth), IRON, M(0, ridge + 0.03, 0));
+  colliders.addBox(x, y + ridge + 0.03, z, 8.5, 0.14, capDepth);
 
   // 倉庫裏の勾配に合わせて最下段を決め、歩いて上がれる蹴上げにする。
   const stairZ = -2.87, tread = 0.56, steps = 11, firstX = -4.65;
