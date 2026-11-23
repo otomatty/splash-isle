@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: '公開するコミットの完全なSHA（省略時はmainの現在のコミット）'
+        description: '公開する完全なSHA（省略時はmain。プロローグ統合前は初回プレビュー版）'
         required: false
         type: string
 
@@ -17,24 +17,82 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  candidate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      PREVIEW_SHA: ${{ inputs.commit_sha || github.sha }}
+    outputs:
+      sha: ${{ steps.select.outputs.sha }}
     steps:
-      - name: Validate commit SHA
-        run: '[[ "$PREVIEW_SHA" =~ ^[0-9a-fA-F]{40}$ ]]'
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.PREVIEW_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+        run: |
+          sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+          # A squash merge also introduces the prologue in main's own history.
+          # A later file move must not send a published site back to the first preview.
+          prologue_commit=$(git log -1 --format=%H "$GITHUB_SHA" -- src/front/story.ts)
+          if [[ -z "$REQUESTED_SHA" && -z "$prologue_commit" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+              echo 'プロローグの統合前のため、公開中のゲスト版を維持します。' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sha=6630a4296a6a4f59704e045e82ba19b126f140ee
+          fi
+          [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: candidate
+    if: needs.candidate.outputs.sha != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Verify guest save compatibility before publishing
+        run: |
+          ./node_modules/.bin/esbuild src/game/state.ts --bundle --platform=browser --format=esm --outfile="$RUNNER_TEMP/pages-guest-state.mjs"
+          cd "$RUNNER_TEMP"
+          node --experimental-webstorage --localstorage-file="$RUNNER_TEMP/pages-guest.sqlite" --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import * as game from './pages-guest-state.mjs';
+
+          // A shares the original single-save key. A guest can land and leave before collecting anything.
+          const landed = { v: 1, gems: 0, revealed: 10, shells: [], stars: 0, portals: 0,
+            playMs: 0, bestMs: null, introComplete: true };
+          const files = ['A', 'B', 'C'].map((slot, i) => ({
+            slot, key: 'splash-isle-save-v1' + (slot === 'A' ? '' : '-' + slot), resetAt: 1000 * i,
+          }));
+          for (const { key, resetAt } of files) {
+            localStorage.setItem(key, JSON.stringify({ ...landed, resetAt, updatedAt: resetAt + 1 }));
+          }
+          for (const { slot, resetAt } of files) {
+            const loaded = game.loadLocal(slot);
+            assert.equal(loaded.introComplete, true, `File ${slot} lost its completed prologue`);
+            assert.equal(loaded.resetAt, resetAt, `File ${slot} lost its restart time`);
+            assert.equal(game.hasAdventure(loaded), true, `File ${slot} cannot resume after landing`);
+            game.saveLocal({ ...loaded, updatedAt: resetAt + 10 }, slot);
+          }
+          for (const { slot, key, resetAt } of files) {
+            const saved = JSON.parse(localStorage.getItem(key));
+            assert.equal(saved.introComplete, true);
+            assert.equal(saved.resetAt, resetAt);
+            assert.equal(saved.updatedAt, resetAt + 10, `File ${slot} did not round-trip to its own key`);
+          }
+          JS
       - run: npm run build:single
       - name: Stage the standalone game
         run: install -Dm644 dist-single/index.html "$RUNNER_TEMP/guest-site/index.html"
