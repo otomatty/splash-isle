@@ -1,8 +1,10 @@
 // 開発用の自動テスト: ヘッドレス Chrome 上でゲームを早送りし、
 // 「町 → 入口を洗って開ける → ステージ選択 → クリアで町へ戻る」を全14個ぶん通して確かめる
 import puppeteer from 'puppeteer-core';
+import { startGuestGame, useOfflineGuest } from './play-guest.mjs';
 
-const url = process.argv[2] ?? 'http://localhost:4173/?debug';
+const url = new URL(process.argv[2] ?? 'http://localhost:4173/');
+url.searchParams.set('debug', '');
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME ?? '/usr/bin/google-chrome',
   headless: true,
@@ -14,17 +16,15 @@ await page.setViewport({ width: 960, height: 540 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !/502|Failed to load resource/.test(m.text())) errors.push(m.text()); });
-await page.goto(url, { waitUntil: 'load' });
-await page.waitForFunction(() => document.getElementById('loading')?.classList.contains('hidden'), { timeout: 120000 });
+await useOfflineGuest(page);
+await page.goto(url.href, { waitUntil: 'load' });
+await startGuestGame(page);
 
 const result = await page.evaluate(async () => {
   const g = window.__splash;
   const out = { checks: [] };
   const check = (name, ok, extra) => out.checks.push([ok ? 'ok  ' : 'FAIL', name, extra ?? '']);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  localStorage.clear();
-  document.getElementById('btnPlay').click();
-  await sleep(1200);
   // 以降は描画を止め、時間を手動で進める
   window.requestAnimationFrame = () => 0;
   g.gfx.render = () => {};
@@ -58,6 +58,15 @@ const result = await page.evaluate(async () => {
   check('水をかけ続けると入口がひらく', p0.state === 'open' && (g.save.portals & 1) === 1, `${out.washSec}秒`);
   waitPlay();
 
+  // 手動で進めるゲームの時計と切り離し、暗転・地区の取得・組み立ての完了まで待つ。
+  const waitForArea = async () => {
+    const deadline = performance.now() + 30000;
+    while (g.switching) {
+      if (performance.now() > deadline) throw new Error('エリアの読み込みが完了しませんでした');
+      await sleep(25);
+    }
+  };
+
   // ── 入口に飛びこむ → ステージ選択 ──
   const enter = async (idx, episode) => {
     const p = portals.list[idx];
@@ -68,11 +77,11 @@ const result = await page.evaluate(async () => {
     const btns = [...document.querySelectorAll('#epList button')];
     if (btns[episode].disabled) return 'locked';
     btns[episode].click();
-    await sleep(900);
+    await waitForArea();
     run(0.3);
     return g.stage && g.stage.episode === episode;
   };
-  const backToTown = async () => { await sleep(900); run(0.3); };
+  const backToTown = async () => { await waitForArea(); run(0.3); };
   // ステージの目標を達成してヒカリ石を取る
   const clear = async () => {
     const a = g.cur.area, m = a.missions[0];
@@ -107,7 +116,11 @@ const result = await page.evaluate(async () => {
 
   // 町のヒカリ石を取りながら 2つ目・3つ目の入口を開ける
   const town = g.town.area;
-  touch(town.gems[1].pos); run(8, () => g.mode !== 'playing'); waitPlay();
+  town.goop.clean(0, 0, 60, 10);
+  touch(town.gems[1].pos);
+  check('掃除達成と石の取得が重なっても取得演出が先に続く', g.cut?.kind === 'gem' && !(g.save.revealed & 1));
+  run(8, () => g.mode !== 'playing'); run(0.2); waitPlay();
+  check('取得演出が終わると掃除報酬の石が現れる', (g.save.revealed & 1) !== 0);
   touch(town.gems[3].pos); run(8, () => g.mode !== 'playing'); waitPlay();
   check('ヒカリ石5個で 石の門もスミに覆われる', st() === 'open,gooped,gooped', `${st()} gems=${bits(g.save.gems)}`);
   for (const i of [1, 2]) { portals.list[i].hp = 0.001; const f = portals.list[i].front; portals.hitTest(f.x, f.y + 1.4, f.z); run(0.2); waitPlay(); }
@@ -128,7 +141,15 @@ const result = await page.evaluate(async () => {
   for (const s of town.starfish) touch(s);
   run(0.2); waitPlay();
   check('町の3条件でヒカリ石が出現', (g.save.revealed & 31) === 31, g.save.revealed);
-  for (const id of [0, 2, 4]) { touch(town.gems[id].pos); run(8, () => g.mode === 'cutscene'); run(0.2); }
+  for (const id of [0, 2, 4]) {
+    touch(town.gems[id].pos);
+    if (id === 4) {
+      const interrupted = JSON.parse(localStorage.getItem('splash-isle-save-v1'));
+      check('最後の石の取得演出中に閉じてもクリアタイムが残る',
+        g.cut?.kind === 'gem' && interrupted.gems === 16383 && interrupted.bestMs > 0);
+    }
+    run(8, () => g.mode === 'cutscene'); run(0.2);
+  }
   run(1);
   out.final = { gems: bits(g.save.gems), mode: g.mode, best: g.save.bestMs, time: document.getElementById('endTime').textContent };
   check('14個そろうとエンディング', g.save.gems === 16383 && g.mode === 'ending' && !document.getElementById('ending').classList.contains('hidden'), JSON.stringify(out.final));

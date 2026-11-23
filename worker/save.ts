@@ -1,15 +1,4 @@
-/** クライアントから届いたセーブデータを検証して、決まった形だけを通す */
-export interface SaveData {
-  v: 1;
-  gems: number;
-  revealed: number;
-  shells: number[];
-  stars: number;
-  portals: number;
-  playMs: number;
-  bestMs: number | null;
-  updatedAt: number;
-}
+import { validRunId, type SaveData } from '../src/game/save-data';
 
 /** ヒカリ石14個ぶんのビット列の最大値 */
 export const GEMS_ALL = (1 << 14) - 1;
@@ -33,5 +22,13 @@ export function parseSave(raw: unknown): SaveData | null {
   const playMs = typeof r.playMs === 'number' && Number.isFinite(r.playMs) ? Math.max(0, Math.min(Math.floor(r.playMs), 360_000_000)) : 0;
   const bestMs = typeof r.bestMs === 'number' && Number.isFinite(r.bestMs) && r.bestMs > 0 ? Math.min(Math.floor(r.bestMs), 360_000_000) : null;
   const updatedAt = typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? Math.max(0, Math.floor(r.updatedAt)) : Date.now();
-  return { v: 1, gems: r.gems, revealed: r.revealed, shells, stars: r.stars, portals, playMs, bestMs, updatedAt };
+  if (r.introComplete !== undefined && typeof r.introComplete !== 'boolean') return null;
+  const introComplete = r.introComplete ?? (playMs > 0 || r.gems !== 0 || (r.revealed & ~10) !== 0 ||
+    shells.length > 0 || r.stars !== 0 || portals !== 0 || bestMs !== null);
+  const resetAt = r.resetAt === undefined ? 0 : r.resetAt;
+  if (!isInt(resetAt, 0, Number.MAX_SAFE_INTEGER)) return null;
+  const runId = r.runId;
+  if (runId !== undefined && (resetAt === 0 || !validRunId(runId))) return null;
+  return { v: 1, gems: r.gems, revealed: r.revealed, shells, stars: r.stars, portals, playMs, bestMs,
+    introComplete, resetAt, ...(runId === undefined ? {} : { runId }), updatedAt };
 }

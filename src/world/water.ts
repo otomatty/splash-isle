@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SKY_HORIZON, SKY_ZENITH, SUN_COLOR, SUN_DIR } from './sky';
+import { DEEP } from './terrain';
 
 /**
  * 海。地形の高さテクスチャから水深を求め、浅瀬の透明感・波打ち際の泡・
@@ -62,7 +63,9 @@ export class Water {
           // 水深（地形の高さから）
           vec2 huv = (p + uHMap.x) * uHMap.y + uHMap.z;
           float th = texture2D(tHeight, clamp(huv, 0.0, 1.0)).r;
-          float depth = max(-th, 0.0);
+          // 陸が地図の端に達していても、その浅瀬や泡を外海まで引きのばさない。
+          float beyondMap = max(abs(p.x), abs(p.y)) - uHMap.x;
+          float depth = mix(max(-th, 0.0), ${(-DEEP).toFixed(1)}, smoothstep(0.0, 12.0, beyondMap));
 
           // さざ波の法線（3層のスクロールノイズ）
           vec2 a = texture2D(tNoise, p * 0.031 + uTime * vec2(0.011, 0.006)).rg;

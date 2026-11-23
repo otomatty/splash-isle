@@ -1,0 +1,205 @@
+.menu-symbols { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
+#login.shore-screen, #title.shore-screen {
+  --isle-ink: #143f46;
+  --isle-paper: #fff8df;
+  --isle-teal: #146866;
+  --isle-display: 'Bricolage Grotesque', 'Trebuchet MS', 'DejaVu Sans', sans-serif;
+  isolation: isolate; display: block; padding: 0; overflow: auto; overscroll-behavior: contain;
+  color: var(--isle-ink); background: #bfe9db; touch-action: pan-y;
+}
+.shore-screen button { font-family: var(--font); color: inherit; cursor: pointer; }
+.shore-screen button:focus-visible { outline: 3px solid #062e47; outline-offset: 4px; }
+.shore-screen button:disabled { cursor: wait; opacity: .62; }
+.menu-shore {
+  position: absolute; inset: 0; min-height: 100%; z-index: -1; overflow: hidden; pointer-events: none;
+  background: radial-gradient(ellipse at 65% 21%, #fffbe6a8 0, #fff5c600 38%),
+    linear-gradient(to bottom, #80cdd7 0%, #b5e8df 27%, #e5f2d9 40%, #3fa9ad 40.3%, #69c8b7 56%, #c8e2bb 62%, #e8cc93 65%, #f1d9a2 100%);
+}
+.menu-shore::after {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse 88% 45% at 48% 110%, #fff4cb88, transparent 85%),
+    radial-gradient(ellipse 30% 40% at 0% 86%, #cda15b28, transparent 88%);
+}
+.menu-shore svg { display: block; }
+.shore-panorama { position: absolute; inset: 0; width: 100%; height: 100%; }
+.shore-atmosphere { position: absolute; inset: 0 0 auto; width: 100%; height: 40%; }
+.corner-palm { position: absolute; top: -1%; width: clamp(115px, 18.5vw, 335px); height: auto; opacity: .94; }
+.palm-left { left: -1.8%; }
+.palm-right { right: -2.5%; transform: scaleX(-1); width: clamp(90px, 16vw, 272px); opacity: .81; }
+.shore-frame { position: relative; width: 100%; min-height: 100%; margin: 0 auto; }
+
+/* 灯台の砂像と対になる島のタイトル。操作類は物語やゲームの描画から独立させる。 */
+.login-frame { display: grid; grid-template-columns: .94fr 1.06fr; align-content: center; align-items: center; gap: 1%; max-width: 1580px; padding: clamp(30px, 8vh, 85px) clamp(32px, 8vw, 148px); }
+.login-copy { position: relative; z-index: 1; width: fit-content; max-width: 100%; }
+.login-wordmark { position: relative; width: 4.37em; margin: 0 0 .17em -.03em; padding: 0 .09em .13em 0; font-family: var(--isle-display); font-size: clamp(76px, min(9.1vw, 14.2vh), 154px); font-weight: 1000; font-style: italic; line-height: .77; letter-spacing: -.09em; transform: rotate(-6deg); }
+.login-wordmark span { position: relative; display: block; width: fit-content; -webkit-text-stroke: .052em #174e52; paint-order: stroke fill; text-shadow: .015em .044em 0 #174e52, .028em .072em 0 #174e52, .042em .098em 0 #174e52, .052em .125em 0 #efad56; }
+.word-splash { color: #fff5c8; }
+.word-isle { margin-left: .80em; color: #ffd775; }
+.word-sun { position: absolute; width: .84em; height: .84em; left: 2.37em; bottom: .20em; transform: rotate(8deg); }
+.login-copy h1 { margin: .4em 0 0; font-size: clamp(22px, 2.65vw, 43px); letter-spacing: .045em; font-weight: 950; line-height: 1.36; text-shadow: 0 2px #ecf2dba8; }
+.isle-subtitle { margin: .35em 0 0; font-size: clamp(13px, 1.4vw, 19px); font-weight: 850; letter-spacing: .18em; }
+.login-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 13px; margin-top: clamp(22px, 4vh, 42px); }
+.shore-action {
+  display: inline-flex; justify-content: center; align-items: center; gap: .8em; min-height: 50px; padding: 10px 22px;
+  border: 2px solid var(--isle-ink); border-radius: 13px; font-size: clamp(14px, 1.3vw, 19px); font-weight: 900; line-height: 1.3;
+  box-shadow: 0 4px 0 var(--isle-ink); transition: transform .15s, box-shadow .15s, background-color .15s;
+}
+.shore-action:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 0 var(--isle-ink); }
+.shore-action:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--isle-ink); }
+.action-login, .action-play, .action-login.hidden + .action-guest { background: #ffd170; }
+.action-guest { background: var(--isle-paper); }
+.action-guest::after, .action-play::after { content: ''; display: inline-block; width: .49em; height: .49em; border-right: .15em solid; border-top: .15em solid; transform: rotate(45deg); }
+.action-login::before { content: 'G'; box-sizing: border-box; display: inline-grid; place-items: center; width: 1.48em; height: 1.48em; font: 900 1em/1 Arial, sans-serif; color: #286761; background: #fff9e9; border: 1px solid #456d6066; border-radius: 50%; }
+.shore-note { margin: 14px 0 0; font-size: clamp(11px, 1.06vw, 15px); font-weight: 700; line-height: 1.65; color: #285052; }
+.login-sculpture { align-self: center; width: 114%; max-width: 790px; min-width: 0; margin: -2% 0 0 -5%; aspect-ratio: 400 / 276; }
+.login-sculpture svg, .slot-sculpture svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* ファイルは同じ浜に並ぶ。選んだ砂像の足元にチェックを付ける。 */
+.file-frame { display: grid; grid-template-rows: auto 1fr auto; gap: 0; max-width: 1800px; padding: max(18px, env(safe-area-inset-top)) clamp(22px, 5vw, 104px) max(18px, env(safe-area-inset-bottom)); }
+.shore-bar { display: flex; align-items: center; justify-content: space-between; gap: 18px; position: relative; z-index: 1; }
+.isle-brand { display: inline-flex; align-items: center; gap: 7px; color: #164b4d; font: italic 950 clamp(20px, 2.5vw, 35px)/1 var(--isle-display); letter-spacing: -.085em; white-space: nowrap; text-shadow: 0 2px 3px #d7f2dc; }
+.isle-brand svg { width: 1.4em; height: 1.4em; border-radius: 50%; background: #ffedb0; box-shadow: 0 0 0 1px #377b7480; }
+.shore-bar .account { display: flex; align-items: center; max-width: min(65vw, 430px); min-height: 39px; padding: 4px 5px 4px 12px; background: #f7f4dcec; border: 1px solid #39756b72; border-radius: 30px; color: #214a47; box-shadow: 0 2px 0 #346f6433; font-size: 12px; }
+.shore-bar .account:empty { display: none; }
+.shore-bar .account span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shore-bar .account .btn, .shore-bar .account button { border: 1px solid #366b65; border-radius: 22px; background: #fffcec; font-size: 12px; line-height: 1.3; font-weight: 800; padding: 7px 12px; box-shadow: none; white-space: nowrap; }
+.file-choices { display: flex; flex-direction: column; align-items: center; align-self: center; text-align: center; margin: clamp(4px, 1.6vh, 22px) 0; }
+.file-choices h2 { position: relative; margin: 0 0 clamp(4px, 1.8vh, 20px); font-size: clamp(32px, min(4.15vw, 7.5vh), 70px); line-height: 1.25; font-weight: 950; letter-spacing: .045em; color: #133f43; text-shadow: 0 2px 0 #fbf5d1, 0 4px 0 #a9cec2; }
+.slot-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(12px, 2.6vw, 56px); width: min(100%, 1160px); }
+.slot-tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: end; min-width: 0; padding: 0; border: 0; background: transparent; border-radius: 16px; }
+.slot-sculpture { display: block; width: min(100%, 39vh); aspect-ratio: 320 / 210; min-height: 0; transition: transform .22s ease; transform-origin: center 80%; }
+.slot-tile:hover .slot-sculpture, .slot-tile:focus-visible .slot-sculpture { transform: translateY(-4px) rotate(-1.5deg); }
+.slot-ticket { position: relative; display: flex; width: 92%; min-height: clamp(58px, 8vh, 78px); align-items: stretch; border-radius: 12px; border: 2px solid #6f806a; background: #fff6dceF; box-shadow: 0 4px 0 #c4aa76; text-align: left; transition: border-color .15s, box-shadow .15s; }
+.file-letter { position: relative; display: flex; flex: 0 0 26%; flex-direction: column; justify-content: center; align-items: center; padding: 5px 0; border-right: 1px dashed #9c9c79; }
+.file-letter small { font: 850 8px/1 var(--isle-display); letter-spacing: .22em; padding-left: .2em; }
+.file-letter b { font: 900 clamp(25px, 4.4vh, 41px)/.95 var(--isle-display); letter-spacing: -.055em; }
+.slot-summary { display: flex; justify-content: center; flex-direction: column; min-width: 0; gap: 2px; padding: 5px clamp(7px, 1.18vw, 18px); }
+.slot-state { font-size: clamp(13px, 1.35vw, 20px); line-height: 1.35; font-weight: 900; }
+.slot-count { font-size: clamp(10px, 1vw, 14px); line-height: 1.4; color: #455953; font-weight: 700; }
+.slot-count:empty { display: none; }
+.slot-check { position: absolute; top: -10px; right: -9px; display: none; align-items: center; justify-content: center; width: 26px; height: 26px; border: 2px solid #fff2cc; border-radius: 50%; background: var(--isle-teal); box-shadow: 0 1px 2px #6b745f88; }
+.slot-check::before { content: ''; width: 9px; height: 5px; margin-top: -3px; transform: rotate(-45deg); border-bottom: 2px solid white; border-left: 2px solid white; }
+.slot-tile[aria-pressed='true'] .slot-ticket { border-color: var(--isle-teal); background: #fff9e8; box-shadow: 0 4px 0 var(--isle-teal), 0 5px 10px #765e4122; }
+.slot-tile[aria-pressed='true'] .file-letter { background: #c8e6c5; border-radius: 10px 0 0 10px; }
+.slot-tile[aria-pressed='true'] .slot-check { display: flex; }
+.file-actions { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; margin-top: clamp(17px, 3.6vh, 38px); }
+.action-play { min-width: clamp(176px, 20vw, 284px); }
+.reset-slot { border: 0; border-bottom: 1px solid #3e615b; padding: 7px 3px; background: transparent; font-size: 13px; font-weight: 800; }
+#menuStatus { margin: 9px 0 0; }
+#menuStatus:empty { display: none; }
+.shore-nav { justify-self: center; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; padding: 2px 10px; border-radius: 28px; background: #faecc8e6; border: 1px solid #b49f70; }
+.shore-nav button { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 35px; margin: 2px 0; padding: 4px clamp(10px, 1.65vw, 26px); border: 0; border-radius: 18px; background: transparent; font-size: clamp(12px, 1.2vw, 16px); font-weight: 850; }
+.shore-nav button:hover, .shore-bar .account button:hover { background: #fff9e2; }
+.shore-nav svg { width: 1.2em; height: 1.2em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 730px) and (orientation: portrait) {
+  .menu-shore { background: linear-gradient(#8bd3db, #def1d7 40%, #3aabae 40.3%, #84d0b8 58%, #efd6a0 65%); }
+  .shore-panorama { width: 175%; left: -37.5%; }
+  .corner-palm { width: 32vw; }
+  .palm-right { width: 27vw; }
+  .login-frame { display: flex; flex-direction: column; justify-content: center; gap: 0; min-height: max(100%, 600px); padding: max(15px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)); }
+  .login-copy { display: contents; }
+  .login-wordmark { order: 0; align-self: center; width: 3.6em; margin: 0 0 .2em; font-size: clamp(72px, min(19vw, 12vh), 108px); }
+  .login-copy h1 { order: 1; margin: .35em 0 0; font-size: clamp(22px, 6vw, 34px); }
+  .isle-subtitle { order: 2; margin-top: .15em; font-size: 13px; }
+  .login-sculpture { order: 3; margin: -1% 0 -2%; width: min(99%, 42vh, 470px); }
+  .login-choices { order: 4; justify-content: center; gap: 11px; margin-top: 2px; }
+  .login-frame .shore-note { order: 5; text-align: center; max-width: 40ch; margin-top: 13px; }
+  .file-frame { min-height: max(100%, 555px); padding: max(14px, env(safe-area-inset-top)) 12px max(17px, env(safe-area-inset-bottom)); }
+  .shore-bar { gap: 8px; }
+  .isle-brand { gap: 4px; font-size: 20px; }
+  .shore-bar .account { max-width: 58%; min-height: 32px; gap: 5px; padding: 3px 4px 3px 9px; font-size: 11px; }
+  .shore-bar .account .btn, .shore-bar .account button { font-size: 11px; padding: 6px 8px; }
+  .file-choices { margin: 7px 0; }
+  .file-choices h2 { margin-bottom: clamp(14px, 4vh, 32px); font-size: clamp(29px, 7.5vw, 46px); }
+  .slot-row { gap: 7px; }
+  .slot-sculpture { width: 109%; aspect-ratio: 320 / 225; }
+  .slot-ticket { width: 100%; display: flex; flex-direction: column; min-height: 83px; border-radius: 10px; }
+  .file-letter { flex: 0 0 auto; flex-direction: row; gap: 4px; min-height: 28px; padding: 2px 0; border-right: 0; border-bottom: 1px dashed #9c9c79; }
+  .file-letter small { font-size: 7px; }
+  .file-letter b { font-size: 21px; }
+  .slot-tile[aria-pressed='true'] .file-letter { border-radius: 8px 8px 0 0; }
+  .slot-summary { flex: 1; text-align: center; gap: 3px; padding: 4px 3px; }
+  .slot-state { font-size: clamp(11px, 3.15vw, 16px); }
+  .slot-count { font-size: clamp(9px, 2.45vw, 12px); }
+  .slot-check { width: 22px; height: 22px; top: -9px; right: -4px; }
+  .file-actions { margin-top: 28px; gap: 13px; }
+  .shore-nav { padding: 1px 4px; }
+  .shore-nav button { gap: 4px; padding: 4px 10px; font-size: 12px; min-height: 38px; }
+}
+@media (max-height: 540px) and (orientation: landscape) {
+  .login-frame { min-height: max(100%, 265px); padding: 10px 7vw 16px; }
+  .login-wordmark { font-size: clamp(48px, 14.3vh, 78px); }
+  .login-copy h1 { font-size: clamp(18px, 5.6vh, 25px); }
+  .isle-subtitle { margin-top: 1px; font-size: 12px; }
+  .login-choices { gap: 8px; margin-top: 12px; }
+  .shore-action { min-height: 37px; padding: 7px 14px; border-radius: 10px; font-size: 13px; }
+  .shore-note { margin-top: 8px; font-size: 10px; }
+  .login-sculpture { max-height: 80vh; }
+  .file-frame { min-height: max(100%, 280px); padding: 7px clamp(15px, 5vw, 60px) 8px; }
+  .shore-bar { min-height: 26px; }
+  .shore-bar .account { padding: 2px 4px 2px 9px; min-height: 25px; font-size: 10px; }
+  .shore-bar .account .btn, .shore-bar .account button { padding: 4px 8px; font-size: 10px; }
+  .isle-brand { font-size: 17px; }
+  .file-choices { margin: 0; }
+  .file-choices h2 { font-size: clamp(18px, 5.8vh, 31px); margin: 0; }
+  .slot-row { max-width: 780px; }
+  .slot-sculpture { width: min(88%, 36vh); }
+  .slot-ticket { width: 84%; min-height: 36px; border-radius: 8px; }
+  .file-letter { padding: 2px 0; }
+  .file-letter b { font-size: 20px; }
+  .file-letter small { font-size: 6px; }
+  .slot-state { font-size: 12px; }
+  .slot-count { font-size: 9px; }
+  .slot-check { height: 19px; width: 19px; top: -6px; right: -5px; }
+  .file-actions { margin-top: 9px; }
+  .action-play { min-height: 29px; padding: 5px 16px; }
+  .shore-nav button { min-height: 24px; font-size: 11px; margin: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shore-screen *, .shore-screen *::before, .shore-screen *::after { transition: none !important; animation: none !important; }
+}
+/* 砂像の台座が波打ち際の少し手前に着地する高さに、ファイル画面の海景を合わせる。 */
+.menu-shore[data-shore='files'] {
+  background: radial-gradient(ellipse at 65% 18%, #fffbe6a8, transparent 38%),
+    linear-gradient(#80cdd7 0%, #b5e8df 22%, #e5f2d9 33.2%, #3fa9ad 33.5%, #69c8b7 46%, #c8e2bb 51%, #f1d9a2 54%);
+}
+.file-screen .shore-panorama { height: 83%; }
+.file-screen .shore-atmosphere { height: 33.2%; }
+.file-screen .palm-left { top: -3.3%; opacity: .70; }
+.file-screen .palm-right { top: -2.6%; opacity: .66; }
+.shore-bar .isle-brand { padding-right: .30em; border-radius: 30px; background: #e0f0d9bd; }
+@media (max-width: 730px) and (orientation: portrait) {
+  .menu-shore[data-shore='files'] { background: linear-gradient(#8bd3db, #def1d7 28.5%, #3aabae 28.8%, #84d0b8 41%, #f1d9a2 46%); }
+  .file-screen .shore-panorama { height: 71.5%; }
+  .file-screen .shore-atmosphere { height: 28.5%; }
+  .slot-sculpture { width: 119%; }
+}
+.tide-finds { position: absolute; width: clamp(64px, 8vw, 123px); height: auto; z-index: 1; }
+.finds-west { left: 7%; bottom: 7%; }
+.finds-east { right: 5%; bottom: 12%; width: clamp(55px, 6.5vw, 95px); }
+@media (max-width: 730px) and (orientation: portrait) {
+  .finds-west { width: 49px; left: 1%; bottom: 7%; }
+  .finds-east { width: 44px; right: 0; bottom: 12%; }
+}
+@media (max-height: 540px) and (orientation: landscape) {
+  .finds-west { left: 2%; bottom: 3%; }
+  .finds-east { right: 2%; bottom: 5%; }
+}
+.shore-screen .slot-tile:focus-visible { outline: 0; }
+.slot-tile:focus-visible .slot-ticket { outline: 3px solid #123f49; outline-offset: 4px; }
+.legacy-import-link { margin-top: 7px; }
+.legacy-dialog { width: min(30rem, 95vw); max-height: 90dvh; overflow: auto; }
+.legacy-dialog table { width: 100%; border-collapse: collapse; font-size: .87rem; font-variant-numeric: tabular-nums; }
+.legacy-dialog th, .legacy-dialog td { padding: .35rem .25rem; border-bottom: 1px solid #b2a884; }
+.legacy-dialog thead { color: #16494b; background: #e5e9cd; }
+.legacy-dialog th[scope='row'] { text-align: left; }
+.legacy-dialog p { margin: .8rem 0; font-size: .9rem; line-height: 1.6; overflow-wrap: anywhere; }
+#legacyImportError { color: #8a3525; font-weight: 700; }
+#legacyImportError:empty { display: none; }
+@media (max-width: 420px) {
+  .restart-dialog.legacy-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 20px); padding: 14px 12px; }
+  .legacy-dialog table { font-size: .8rem; line-height: 1.35; }
+  .legacy-dialog th, .legacy-dialog td { padding: .3rem .18rem; }
+  .legacy-dialog th { white-space: nowrap; }
+  .restart-dialog.legacy-dialog p { margin: .65rem 0; font-size: .82rem; line-height: 1.5; }
+}

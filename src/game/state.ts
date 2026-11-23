@@ -1,22 +1,8 @@
-/** セーブデータ（localStorage とクラウドで同じ形） */
-export interface SaveData {
-  v: 1;
-  /** 取得済みのヒカリ石（ビット列） */
-  gems: number;
-  /** 出現済みのヒカリ石（ビット列） */
-  revealed: number;
-  /** 取得済みの貝がらの番号 */
-  shells: number[];
-  /** 取得済みのヒトデ（ビット列。町のぶん） */
-  stars: number;
-  /** ひらいた入口（ビット列） */
-  portals: number;
-  /** 今回の挑戦のプレイ時間（ミリ秒） */
-  playMs: number;
-  /** 全クリアの最短時間（ミリ秒）。未クリアは null */
-  bestMs: number | null;
-  updatedAt: number;
-}
+import { mergeSaves, validRunId, type SaveData } from './save-data';
+export { compareRuns, mergeSaves, type SaveData } from './save-data';
+
+export const SLOT_IDS = ['A', 'B', 'C'] as const;
+export type SaveSlot = typeof SLOT_IDS[number];
 
 export const GEM_COUNT = 14;
 /** 町で手に入るヒカリ石の数（番号 0〜4） */
@@ -28,7 +14,26 @@ const KEY = 'splash-isle-save-v1';
 const SETTINGS_KEY = 'splash-isle-settings-v1';
 
 export function newSave(bestMs: number | null = null): SaveData {
-  return { v: 1, gems: 0, revealed: INITIAL_REVEALED, shells: [], stars: 0, portals: 0, playMs: 0, bestMs, updatedAt: Date.now() };
+  return { v: 1, gems: 0, revealed: INITIAL_REVEALED, shells: [], stars: 0, portals: 0, playMs: 0, bestMs, introComplete: false, resetAt: 0, updatedAt: Date.now() };
+}
+
+function randomId(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function restartSave(previous: SaveData): SaveData {
+  const next = newSave(previous.bestMs);
+  next.resetAt = Math.min(Number.MAX_SAFE_INTEGER, Math.max(next.updatedAt, previous.resetAt + 1, previous.updatedAt + 1));
+  // 時刻が上限に達しても、次のやり直しは必ず親より新しい。別端末で同時なら乱数で決着する。
+  const serial = next.resetAt === previous.resetAt && previous.runId ? BigInt(previous.runId.split('-')[0]) + 1n : 0n;
+  next.runId = serial + '-' + randomId();
+  next.updatedAt = next.resetAt;
+  return next;
+}
+
+export function hasAdventure(save: SaveData): boolean {
+  return save.introComplete || save.gems !== 0 || save.shells.length > 0 || save.stars !== 0 ||
+    save.portals !== 0 || save.revealed !== INITIAL_REVEALED || save.playMs > 0;
 }
 
 /** 外から来たデータを安全な形に整える（壊れた値は捨てる） */
@@ -39,7 +44,7 @@ export function sanitizeSave(raw: unknown): SaveData | null {
   const int = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : 0);
   const shells = Array.isArray(r.shells) ? Array.from(new Set(r.shells.filter((n): n is number => Number.isInteger(n) && n >= 0 && n < 256))).slice(0, 256) : [];
   const best = typeof r.bestMs === 'number' && Number.isFinite(r.bestMs) && r.bestMs > 0 ? Math.floor(r.bestMs) : null;
-  return {
+  const save: SaveData = {
     v: 1,
     gems: int(r.gems, ALL_GEMS),
     revealed: (int(r.revealed, ALL_GEMS) & 31) | INITIAL_REVEALED,
@@ -48,36 +53,71 @@ export function sanitizeSave(raw: unknown): SaveData | null {
     portals: int(r.portals, 7),
     playMs: int(r.playMs, 1000 * 60 * 60 * 100),
     bestMs: best,
+    introComplete: r.introComplete === true,
+    resetAt: int(r.resetAt, Number.MAX_SAFE_INTEGER),
     updatedAt: int(r.updatedAt, Number.MAX_SAFE_INTEGER),
   };
-}
-
-export function loadLocal(): SaveData {
-  try {
-    const s = localStorage.getItem(KEY);
-    if (s) return sanitizeSave(JSON.parse(s)) ?? newSave();
-  } catch {
-    /* プライベートモードなどで保存領域が使えない場合はメモリ上だけで進める */
+  if (r.runId !== undefined) {
+    if (!save.resetAt || !validRunId(r.runId)) return null;
+    save.runId = r.runId;
   }
-  return newSave();
+  if (r.introComplete === undefined) save.introComplete = hasAdventure(save) || best !== null;
+  return save;
 }
 
-export function saveLocal(data: SaveData): void {
+// A は従来と同じキーを使い、既存のゲストの冒険もそのまま表示する。
+function localKey(slot: SaveSlot, owner?: string): string {
+  const base = slot === 'A' ? KEY : KEY + '-' + slot;
+  return owner === undefined ? base : base + ':account:' + encodeURIComponent(owner);
+}
+
+/** 保存ごとに別のキーへ書く。統合元を消すのは、統合先が端末に残った後だけ。 */
+function localCopies(key: string): { save: SaveData | null; sources: string[]; prefix: string } {
+  const prefix = 'splash-isle-journal:' + encodeURIComponent(key) + ':';
+  const sources: string[] = [];
+  let save: SaveData | null = null;
+  for (const name of [key, ...Object.keys(localStorage).filter(name => name.startsWith(prefix))]) {
+    const raw = localStorage.getItem(name);
+    if (!raw) continue;
+    try {
+      const part = sanitizeSave(JSON.parse(raw));
+      if (!part) continue;
+      save = save ? mergeSaves(save, part) : part;
+      if (name !== key) sources.push(name);
+    } catch { /* 壊れたコピーがあっても正常な記録を使う */ }
+  }
+  return { save, sources, prefix };
+}
+
+export function loadLocal(slot: SaveSlot = 'A', owner?: string): SaveData {
+  try { return localCopies(localKey(slot, owner)).save ?? newSave(); }
+  catch { return newSave(); }
+}
+
+export function saveLocal(data: SaveData, slot: SaveSlot = 'A', owner?: string): boolean {
   try {
-    localStorage.setItem(KEY, JSON.stringify(data));
+    const key = localKey(slot, owner);
+    const { save, sources, prefix } = localCopies(key);
+    const value = JSON.stringify(save ? mergeSaves(save, data) : data);
+    localStorage.setItem(prefix + randomId(), value);
+    // 従来のキーにも同じ内容を置く。並行書き込みがあれば、別キーの確定コピーが両方を残す。
+    try {
+      for (const source of sources) localStorage.removeItem(source);
+      localStorage.setItem(key, value);
+    } catch { /* 確定コピーはすでに書けている。読み込み時には従来キーと合わせて復元する。 */ }
+    return true;
   } catch {
-    /* 保存できない環境では何もしない */
+    return false;
   }
 }
 
-/** ローカルとクラウドのセーブを統合する。進んでいるほうを採用し、ベストタイムは速いほう */
-export function mergeSaves(a: SaveData, b: SaveData): SaveData {
-  const count = (n: number) => n.toString(2).replace(/0/g, '').length;
-  const pa = count(a.gems) * 1000 + count(a.stars) * 10 + a.shells.length;
-  const pb = count(b.gems) * 1000 + count(b.stars) * 10 + b.shells.length;
-  const base = pb > pa || (pb === pa && b.updatedAt > a.updatedAt) ? b : a;
-  const bests = [a.bestMs, b.bestMs].filter((x): x is number => x !== null);
-  return { ...base, shells: [...base.shells], portals: a.portals | b.portals, bestMs: bests.length ? Math.min(...bests) : null };
+/** 保存時刻と貝の並びは、書き込みが必要かどうかに影響しない。 */
+export function sameSave(a: SaveData, b: SaveData): boolean {
+  if (a.gems !== b.gems || a.revealed !== b.revealed || a.stars !== b.stars || a.portals !== b.portals ||
+      a.introComplete !== b.introComplete || a.resetAt !== b.resetAt || a.runId !== b.runId || a.playMs !== b.playMs ||
+      a.bestMs !== b.bestMs || a.shells.length !== b.shells.length) return false;
+  const owned = new Set(a.shells);
+  return b.shells.every(id => owned.has(id));
 }
 
 export interface Settings {

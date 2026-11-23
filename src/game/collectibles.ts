@@ -3,9 +3,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { Area } from '../world/area';
 import { P_SPARK, P_SPLASH, type Particles } from './particles';
 
-function shellGeometry(): THREE.BufferGeometry {
+function shellGeometry(distant = false): THREE.BufferGeometry {
   // ホタテ形の貝がら: 扇形のグリッドを、放射状のうね・波打つ縁・ふくらみで形づくる（表裏2枚）
-  const NA = 28, NR = 7, R = 0.36, SPREAD = 1.25;
+  const NA = distant ? 12 : 28, NR = distant ? 2 : 7, R = 0.36, SPREAD = 1.25;
   const pos: number[] = [];
   const idx: number[] = [];
   for (const side of [1, -1]) {
@@ -89,6 +89,7 @@ interface Gem {
 export class Collectibles {
   readonly root = new THREE.Group();
   private readonly shellMesh: THREE.InstancedMesh;
+  private readonly farShellMesh: THREE.InstancedMesh;
   private readonly starMesh: THREE.InstancedMesh;
   readonly shellTaken: boolean[];
   readonly starTaken: boolean[];
@@ -106,9 +107,14 @@ export class Collectibles {
   constructor(private readonly level: Area, private readonly particles: Particles) {
     const shellMat = new THREE.MeshStandardMaterial({ color: 0xffc233, metalness: 0.9, roughness: 0.24, emissive: 0x6a3c00, emissiveIntensity: 0.6 });
     this.shellMesh = new THREE.InstancedMesh(shellGeometry(), shellMat, Math.max(1, level.shells.length));
-    this.shellMesh.count = level.shells.length;
+    this.shellMesh.count = 0;
     this.shellMesh.castShadow = true;
     this.shellMesh.frustumCulled = false;
+    this.farShellMesh = new THREE.InstancedMesh(shellGeometry(true), shellMat, Math.max(1, level.shells.length));
+    this.farShellMesh.count = 0;
+    this.farShellMesh.frustumCulled = false;
+    this.shellMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.farShellMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.shellTaken = level.shells.map(() => false);
     this.shellAnim = new Float32Array(level.shells.length);
 
@@ -129,7 +135,7 @@ export class Collectibles {
     this.refillMesh.count = level.refills.length;
     this.refillMesh.frustumCulled = false;
     this.refillT = new Float32Array(level.refills.length);
-    this.root.add(this.shellMesh, this.starMesh, this.refillMesh);
+    this.root.add(this.shellMesh, this.farShellMesh, this.starMesh, this.refillMesh);
 
     // ヒカリ石
     const coreGeo = new THREE.OctahedronGeometry(0.42, 0);
@@ -263,19 +269,22 @@ export class Collectibles {
   dispose(): void {
     this.root.traverse((o) => {
       const m = o as THREE.Mesh;
+      if (m instanceof THREE.InstancedMesh) m.dispose();
       m.geometry?.dispose();
       const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
       for (const mat of mats) mat.dispose();
     });
   }
 
-  update(dt: number, t: number, px: number, py: number, pz: number, canCollect: boolean): void {
+  update(dt: number, t: number, px: number, py: number, pz: number, canCollect: boolean, camera: THREE.Vector3): void {
     this.time.value = t;
     const d = this.dummy;
     const P = this.particles;
     const cy = py + 0.65;
     // 貝がら
     const shells = this.level.shells;
+    this.shellMesh.count = 0;
+    this.farShellMesh.count = 0;
     for (let i = 0; i < shells.length; i++) {
       const s = shells[i];
       if (this.shellTaken[i]) {
@@ -288,7 +297,7 @@ export class Collectibles {
           d.rotation.set(0, t * 18, 0);
           d.scale.setScalar(a * 1.2);
         } else {
-          d.scale.setScalar(0);
+          continue;
         }
       } else {
         const dx = s.x - px, dy = s.y - cy, dz = s.z - pz;
@@ -303,9 +312,18 @@ export class Collectibles {
         d.scale.setScalar(1);
       }
       d.updateMatrix();
-      this.shellMesh.setMatrixAt(i, d.matrix);
+      // 保存や取得判定は元の番号 i のまま、描画する分だけを各バッファの先頭に詰める。
+      const mesh = camera.distanceToSquared(s) < 24 * 24 ? this.shellMesh : this.farShellMesh;
+      mesh.setMatrixAt(mesh.count, d.matrix);
+      mesh.count++;
     }
-    this.shellMesh.instanceMatrix.needsUpdate = true;
+    for (const mesh of [this.shellMesh, this.farShellMesh]) {
+      mesh.visible = mesh.count > 0;
+      if (!mesh.visible) continue;
+      mesh.instanceMatrix.clearUpdateRanges();
+      mesh.instanceMatrix.addUpdateRange(0, mesh.count * 16);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
     // ヒトデ
     const stars = this.level.starfish;
     for (let i = 0; i < stars.length; i++) {

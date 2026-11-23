@@ -1,0 +1,149 @@
+#prologue {
+  --story-paper: #fff3d8;
+  --story-ink: #22464b;
+  position: absolute;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: max(14px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  color: var(--story-paper);
+  background:
+    radial-gradient(ellipse at 18% 10%, #36656a96, transparent 55%),
+    radial-gradient(ellipse at 86% 92%, #34564f88, transparent 58%),
+    #193e46;
+  font-family: var(--font, system-ui, sans-serif);
+  touch-action: manipulation;
+}
+.story-wrap {
+  min-width: 0;
+  width: min(100%, 1048px);
+  margin: auto;
+}
+.story-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 3px 12px;
+}
+#storyLabel {
+  margin: 0;
+  color: #ffefc9;
+  font-size: clamp(15px, 1.7vw, 21px);
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif CJK JP', serif;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+#prologue button {
+  min-height: 44px;
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  outline-offset: 3px;
+  font: 720 15px/1.2 var(--font, system-ui, sans-serif);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+#prologue button:focus-visible { outline: 3px solid #d29d4c; }
+#prologue button[hidden] { display: none; }
+#prologue button > svg { width: 20px; height: 20px; flex: none; }
+#prologue .story-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  color: #ffedc8;
+  background: transparent;
+  font-size: 13px;
+}
+#prologue .story-menu:hover { background: #ffffff14; }
+.story-page {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #fae9bc;
+  border-radius: 8px;
+  box-shadow: 0 4px 0 #a68d65, 0 20px 44px #092d3552;
+  background: var(--story-paper);
+  color: var(--story-ink);
+}
+.story-picture {
+  min-width: 0;
+  overflow: hidden;
+  aspect-ratio: 16 / 7;
+  position: relative;
+  background: #a1c9bc;
+}
+.story-picture canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+@media (min-width: 601px) and (min-height: 621px) {
+  .story-picture { width: 100%; max-height: 43vh; }
+}
+.story-panel {
+  padding: clamp(18px, 2.9vh, 31px) clamp(22px, 4vw, 52px) 16px;
+  border-top: 3px solid #e3be82;
+  background: linear-gradient(110deg, #fff6df, #f9ebcd);
+}
+.story-copy h2 {
+  margin: 0 0 9px;
+  font: 900 clamp(24px, 3.4vw, 39px)/1.30 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif CJK JP', serif;
+  letter-spacing: 0.045em;
+}
+.story-copy p {
+  margin: 0;
+  max-width: 51em;
+  font-size: clamp(15px, 1.65vw, 19px);
+  line-height: 1.80;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+}
+.story-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding-top: 13px;
+  margin-top: 15px;
+  border-top: 1px solid #ceb991;
+}
+.story-count {
+  color: #65756a;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 17px;
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+}
+.story-actions { display: flex; align-items: center; gap: 10px; }
+#storyBack, #storyNext { display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
+#storyBack { padding: 8px 10px; background: transparent; color: #395c57; }
+#storyBack:hover { background: #e9dec1; }
+#storyNext { padding: 10px 19px; color: #fff6dc; background: #23585a; box-shadow: 0 2px 0 #183e43; }
+#storyNext:hover { background: #36706a; }
+#storyNext:active { transform: translateY(1px); }
+@media (max-width: 600px) {
+  #prologue { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .story-top { margin-bottom: 7px; }
+  .story-picture { height: auto; min-height: 0; aspect-ratio: 1.49; }
+  .story-panel { padding: 18px 16px 15px; }
+  .story-copy h2 { font-size: clamp(22px, 6vw, 30px); }
+  .story-copy p { font-size: 15px; letter-spacing: 0.02em; line-height: 1.75; }
+  .story-nav { margin-top: 12px; padding-top: 10px; }
+}
+@media (max-height: 620px) and (min-width: 601px) {
+  #prologue { padding-top: max(5px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .story-wrap { width: min(100%, 900px); }
+  .story-top { margin-bottom: 4px; }
+  .story-picture { height: clamp(145px, 40vh, 236px); min-height: 0; }
+  .story-panel { padding: 10px 22px; }
+  .story-copy h2 { font-size: 23px; margin-bottom: 3px; }
+  .story-copy p { font-size: 14px; line-height: 1.5; }
+  .story-nav { padding-top: 5px; margin-top: 6px; }
+}
+@media (max-height: 430px) and (min-width: 601px) {
+  .story-page { display: grid; grid-template-columns: 47% 53%; }
+  .story-picture { width: 100%; height: 100%; aspect-ratio: auto; min-height: 220px; }
+  .story-panel { border-top: 0; border-left: 2px solid #e3be82; padding: 12px 14px; display: flex; flex-direction: column; }
+  .story-copy { flex: 1; }
+}

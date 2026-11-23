@@ -4,7 +4,7 @@
 import mfpkg from 'miniflare';
 const { Miniflare, Response: MfResponse, convertV4MiniflareOptions } = mfpkg;
 import { build } from 'esbuild';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { generateKeyPairSync, createSign, createHash } from 'node:crypto';
 
 const { outputFiles } = await build({ entryPoints: ['worker/index.ts'], bundle: true, format: 'esm', target: 'es2022', write: false });
@@ -31,20 +31,23 @@ const outboundService = async (request) => {
   return new MfResponse('blocked', { status: 599 });
 };
 
-const mf = new Miniflare(
-  convertV4MiniflareOptions({
+const workerOptions = (bindings) => convertV4MiniflareOptions({
     modules: true,
     script: outputFiles[0].text,
     compatibilityDate: '2026-11-01',
     compatibilityFlags: ['nodejs_compat'],
     d1Databases: { DB: 'test-db' },
-    bindings: { GOOGLE_CLIENT_ID: CLIENT_ID, GOOGLE_CLIENT_SECRET: 'test-secret' },
+    bindings,
     serviceBindings: { ASSETS: () => new MfResponse('<!doctype html>game', { headers: { 'content-type': 'text/html' } }) },
     outboundService,
-  }),
-);
+  });
+const mf = new Miniflare(workerOptions({ GOOGLE_CLIENT_ID: CLIENT_ID, GOOGLE_CLIENT_SECRET: 'test-secret' }));
 const db = await mf.getD1Database('DB');
-for (const stmt of readFileSync('migrations/0001_init.sql', 'utf8').replace(/--.*$/gm, '').split(';').map((s) => s.trim()).filter(Boolean)) await db.prepare(stmt).run();
+const applyMigration = async (file) => {
+  const sql = readFileSync('migrations/' + file, 'utf8').replace(/--.*$/gm, '');
+  for (const statement of sql.split(';').map(s => s.trim()).filter(Boolean)) await db.prepare(statement).run();
+};
+await applyMigration('0001_init.sql');
 
 const ORIGIN = 'https://game.test';
 let pass = 0, failN = 0;
@@ -57,7 +60,8 @@ console.log('静的アセットと未ログイン状態');
 let r = await call('/');
 check('/ はゲーム本体を返す', r.status === 200 && (await r.text()).includes('game'));
 r = await call('/api/me');
-check('/api/me は未ログインで user:null', r.status === 200 && (await r.json()).user === null);
+const guestSession = await r.json();
+check('/api/me は未ログインで user:null、OAuth 設定済みならログイン可能', r.status === 200 && guestSession.user === null && guestSession.loginAvailable === true);
 r = await call('/api/save');
 check('未ログインの /api/save は 401', r.status === 401); await r.arrayBuffer();
 r = await call('/api/nope');
@@ -108,7 +112,23 @@ check('DB にはトークンのハッシュだけを保存', row.token_hash !== 
 
 console.log('セーブとランキング');
 const save = { v: 1, gems: 3, revealed: 11, shells: [0, 4, 9], stars: 5, portals: 1, playMs: 61000, bestMs: null, updatedAt: Date.now() };
-const put = (body, cookies, origin = ORIGIN) => call('/api/save', { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', ...(origin ? { Origin: origin } : {}) } }, cookies);
+// 本番にすでに存在する旧スキーマの A。二つ目の migration をその上に適用する。
+await db.prepare('INSERT INTO saves (user_id, data, gems, updated_at) VALUES (?, ?, ?, ?)')
+  .bind(me.id, JSON.stringify(save), save.gems, save.updatedAt).run();
+for (const file of readdirSync('migrations').filter(f => f.endsWith('.sql') && f > '0001_init.sql').sort()) await applyMigration(file);
+const getSlot = async (slot, cookie = S) => (await (await call('/api/save' + (slot ? '/' + slot : ''), {}, cookie)).json()).save;
+const put = (body, cookies, origin = ORIGIN, slot = '', owner) => call('/api/save' + (slot ? '/' + slot : ''), {
+  method: 'PUT', body: JSON.stringify(body),
+  headers: { 'Content-Type': 'application/json', ...(origin ? { Origin: origin } : {}), ...(owner === undefined ? {} : { 'X-Splash-Owner': owner }) },
+}, cookies);
+check('移行前のセーブが従来の URL と A の両方で読み出せる', (await getSlot('')).gems === 3 && (await getSlot('A')).shells.join() === '0,4,9');
+r = await call('/api/save', {}, S);
+check('移行した A の revision は 1', (await r.json()).revision === 1);
+check('B と C は A の進捗を引き継がず空で始まる', await getSlot('B') === null && await getSlot('C') === null);
+r = await put({ save }, S, ORIGIN, 'D');
+check('存在しないファイルへの保存は A に流れない', r.status === 404); await r.arrayBuffer();
+r = await put({ save: { ...save, introComplete: 'true' } }, S, ORIGIN, 'C');
+check('壊れた導入フラグは拒否する', r.status === 400); await r.arrayBuffer();
 r = await put({ save }, S, 'https://evil.example');
 check('別オリジンからの PUT は 403', r.status === 403); await r.arrayBuffer();
 r = await put({ save }, S, null);
@@ -141,13 +161,152 @@ r = await call('/api/leaderboard');
 lb = (await r.json()).entries;
 check('ありえない速さの記録は載せない／未ログインでも閲覧可', lb[0].bestMs === 185000 && lb[0].me === false);
 
+const saveB = { ...save, gems: 16383, bestMs: 172000, introComplete: true, resetAt: 0, updatedAt: save.updatedAt + 30 };
+r = await put({ save: saveB }, S, ORIGIN, 'B', me.id);
+check('ユーザーを指定して本人の B に保存できる', r.status === 200 && (await r.json()).ok);
+r = await call('/api/save/B', { headers: { 'X-Splash-Owner': me.id } }, S);
+check('ユーザーを指定して本人の B を読める', r.status === 200 && (await r.json()).save.bestMs === saveB.bestMs);
+const saveC = { ...save, gems: 0, stars: 0, portals: 0, shells: [], revealed: 10, playMs: 0, introComplete: true, resetAt: 0 };
+r = await put({ save: saveC }, S, ORIGIN, 'C'); await r.arrayBuffer();
+check('導入だけを見終えた C も三つのファイルを独立して読み戻せる',
+  (await getSlot('')).bestMs === 5000 && (await getSlot('B')).bestMs === 172000 && (await getSlot('C')).introComplete === true);
+const resetB = { ...saveC, introComplete: false, resetAt: saveB.updatedAt + 50, updatedAt: saveB.updatedAt + 50, bestMs: 172000 };
+r = await put({ save: resetB }, S, ORIGIN, 'B'); await r.arrayBuffer();
+r = await put({ save: { ...saveB, updatedAt: resetB.updatedAt + 500 } }, S, ORIGIN, 'B');
+check('旧クライアントからの古い世代の書き込みも成功扱いしない', r.status === 409 && (await r.json()).error === 'save_conflict');
+check('やり直し前のタブから遅れて届いた保存で B は復活せず、A・C は維持される',
+  (await getSlot('B')).gems === 0 && (await getSlot('B')).resetAt === resetB.resetAt && (await getSlot('C')).introComplete && (await getSlot('')).gems === 16383);
+const latestB = { ...resetB, introComplete: true, shells: [8], updatedAt: resetB.updatedAt + 10 };
+r = await put({ save: latestB }, S, ORIGIN, 'B'); await r.arrayBuffer();
+r = await put({ save: resetB }, S, ORIGIN, 'B'); await r.arrayBuffer();
+check('同じ冒険の順番が前後した保存でも新しい進捗を維持する', (await getSlot('B')).shells.join() === '8');
+r = await call('/api/leaderboard', {}, S);
+lb = (await r.json()).entries;
+check('三つの冒険からひとりの最速記録が残り、ファイルのやり直し後も維持される', lb.length === 1 && lb[0].bestMs === 172000);
+
 console.log('2人目のユーザーと再ログイン');
 r = await call('/api/auth/login');
 const oc2 = cookieOf(r, '__Host-si_oauth'); const [st2, nonce2] = val(oc2).split('=')[1].split('.');
 nextIdToken = signJwt({ ...goodClaims, sub: 'google-user-2', nonce: nonce2, name: 'ふたりめ' });
 r = await call(`/api/auth/callback?code=c2&state=${st2}`, {}, val(oc2));
 const S2 = val(cookieOf(r, '__Host-si_session'));
-r = await put({ save: { ...save, gems: 16383, revealed: 31, bestMs: 150000 } }, S2); await r.arrayBuffer();
+check('別のプレイヤーから B のセーブは見えない', await getSlot('B', S2) === null);
+r = await call('/api/save/B', { headers: { 'X-Splash-Owner': me.id } }, S2);
+check('別タブでログイン先が変わると前のユーザーとして読めない', r.status === 409 && (await r.json()).error === 'account_changed');
+r = await put({ save }, S2, ORIGIN, 'B', me.id);
+check('前のタブからの保存は 409 で拒否し、どちらの B も変更しない',
+  r.status === 409 && (await r.json()).error === 'account_changed' && await getSlot('B', S2) === null && (await getSlot('B', S)).shells.join() === '8');
+
+for (const slot of ['A', 'B']) {
+  const path = '/api/save/' + slot;
+  const read = async () => (await call(path, {}, S2)).json();
+  const write = (save, revision) => put({ save, revision }, S2, ORIGIN, slot);
+  const empty = await read();
+  check(`${slot}: 空き枠の revision は 0`, empty.revision === 0 && empty.save === null);
+  r = await write(save, -1);
+  check(`${slot}: 不正な revision を拒否する`, r.status === 400 && (await r.json()).error === 'invalid_revision');
+  r = await write(save, 4);
+  const missing = await r.json();
+  check(`${slot}: 既存の版を指定した書き込みは空き枠を作らない`,
+    r.status === 409 && missing.error === 'save_conflict' && missing.revision === 0 && missing.save === null);
+
+  // 2つの端末は同じ GET を終えているとする。時計が進んでいる方にも書き込みの優先権はない。
+  const race = async (a, b, revision) => {
+    const responses = await Promise.all([write(a, revision), write(b, revision)]);
+    return Promise.all(responses.map(async res => ({ status: res.status, ...await res.json() })));
+  };
+  const first = { ...save, updatedAt: 50, gems: 4 };
+  const second = { ...save, updatedAt: 5_000_000_000_000, gems: 8 };
+  const created = await race(first, second, 0);
+  let current = await read();
+  check(`${slot}: 同じ空き枠への同時保存は一方だけが作成し、もう一方に現在の内容と版を返す`,
+    current.revision === 1 && created.some(x => x.status === 200 && x.ok && x.revision === 1) &&
+    created.some(x => x.status === 409 && x.error === 'save_conflict' && x.revision === 1 && x.save.gems === current.save.gems));
+  const edits = await race({ ...first, shells: [11] }, { ...second, shells: [22] }, current.revision);
+  current = await read();
+  check(`${slot}: 同じ版からの同時更新も一方だけが採用される`,
+    current.revision === 2 && edits.some(x => x.status === 200 && x.revision === 2) &&
+    edits.some(x => x.status === 409 && x.revision === 2 && x.save.shells[0] === current.save.shells[0]));
+
+  const merged = { ...first, gems: first.gems | second.gems, shells: [11, 22], updatedAt: 1 };
+  r = await write(merged, current.revision);
+  const accepted = await r.json();
+  current = await read();
+  check(`${slot}: 時計が遅くても競合解消した内容を両方の端末が読み戻せる`,
+    r.status === 200 && accepted.revision === 3 && current.revision === 3 && current.save.updatedAt === 1 &&
+    current.save.gems === 12 && current.save.shells.join() === '11,22');
+  if (slot === 'B') {
+    const reset = { ...saveC, resetAt: 100, updatedAt: 100 };
+    r = await write(reset, current.revision);
+    const afterReset = await r.json();
+    r = await write(second, afterReset.revision);
+    const rejected = await r.json();
+    check('最新の版でも、やり直し前の世代の保存は 409 で拒否する',
+      r.status === 409 && afterReset.revision === 4 && rejected.revision === 4 && rejected.save.resetAt === 100 && rejected.save.gems === 0);
+  }
+}
+const beforeLegacy = await (await call('/api/save', {}, S2)).json();
+const legacyFuture = { ...oldSave, gems: 64, shells: [33], stars: 8, revealed: 16, bestMs: 48000, updatedAt: 5_000_000_000_000 };
+r = await put({ save: legacyFuture }, S2);
+const legacyWritten = await r.json();
+let combined = await (await call('/api/save', {}, S2)).json();
+check('未来の時計を持つ旧クライアントも、新クライアントが集めた全種類の進捗を維持する',
+  r.status === 200 && combined.revision === beforeLegacy.revision + 1 && legacyWritten.revision === combined.revision &&
+  combined.save.gems === 76 && combined.save.shells.join() === '11,22,33' && combined.save.revealed === 27 &&
+  combined.save.stars === 13 && combined.save.portals === 1 && combined.save.introComplete);
+r = await put({ save, revision: beforeLegacy.revision }, S2);
+check('旧クライアントの更新後は、すでに読み込んでいた版と競合する', r.status === 409 && (await r.json()).revision === combined.revision);
+r = await put({ save: { ...legacyFuture, updatedAt: 1, gems: 128, shells: [44], bestMs: 55000 } }, S2);
+combined = await (await call('/api/save', {}, S2)).json();
+check('時計が遅い旧クライアントの追加進捗も既存の記録と合流する',
+  r.status === 200 && combined.save.shells.join() === '11,22,33,44' && combined.save.gems === 204 && combined.save.bestMs === 48000);
+await r.arrayBuffer();
+r = await put({ save: { ...saveC, resetAt: 50, updatedAt: 50 }, revision: combined.revision }, S2);
+const newAdventure = await r.json();
+combined = await (await call('/api/save', {}, S2)).json();
+check('やり直しの CAS は収集物を消し、個人の最短記録は60秒未満でも保存する',
+  r.status === 200 && combined.save.gems === 0 && combined.save.shells.length === 0 && combined.save.bestMs === 48000);
+r = await put({ save: { ...saveC, resetAt: 70, bestMs: 45000 } }, S2);
+combined = await (await call('/api/save', {}, S2)).json();
+check('旧クライアントでやり直しても個人記録の短い方を採用する',
+  r.status === 200 && combined.revision === newAdventure.revision + 1 && combined.save.bestMs === 45000);
+await r.arrayBuffer();
+r = await put({ save: { ...saveC, resetAt: 70, bestMs: 51000 }, revision: combined.revision }, S2);
+combined = await (await call('/api/save', {}, S2)).json();
+check('同じ冒険の CAS も、長いタイムで最短記録を上書きしない', r.status === 200 && combined.save.bestMs === 45000);
+await r.arrayBuffer();
+const firstRun = { ...saveC, resetAt: 10, runId: '0-' + '0'.repeat(32), gems: 4, bestMs: 15000 };
+const secondRun = { ...saveC, resetAt: 10, runId: '0-' + 'f'.repeat(32), gems: 8, bestMs: 17000 };
+r = await put({ save: { ...firstRun, runId: 'invalid' }, revision: 0 }, S2, ORIGIN, 'C');
+check('世代識別子の形式を調べる', r.status === 400 && (await r.json()).error === 'invalid_save');
+r = await put({ save: firstRun, revision: 0 }, S2, ORIGIN, 'C');
+const firstRunVersion = await r.json();
+r = await put({ save: secondRun }, S2, ORIGIN, 'C');
+const secondRunVersion = await r.json();
+let winning = await getSlot('C', S2);
+check('同時刻に別々に始めた冒険は旧形式の PUT でも収集物を混ぜず、ベストだけを引き継ぐ',
+  firstRunVersion.revision === 1 && secondRunVersion.revision === 2 &&
+  winning.runId === secondRun.runId && winning.gems === 8 && winning.bestMs === 15000);
+for (const fallback of [firstRun, { ...saveC, resetAt: 10 }]) {
+  r = await put({ save: fallback, revision: secondRunVersion.revision }, S2, ORIGIN, 'C');
+  const loser = await r.json();
+  check('現在の版を知っていても、同時刻の以前の冒険から上書きできない (' + (fallback.runId ? 'ID付き' : 'IDなし') + ')',
+    r.status === 409 && loser.save.runId === secondRun.runId && loser.revision === 2);
+}
+r = await put({ save: firstRun }, S2, ORIGIN, 'C');
+check('版を送らない端末も同時刻の以前の冒険には戻せない', r.status === 409 && (await r.json()).save.runId === secondRun.runId);
+r = await put({ save: { ...firstRun, resetAt: 11 }, revision: 2 }, S2, ORIGIN, 'C');
+winning = await getSlot('C', S2);
+check('次にやり直した冒険は識別子の辞書順より優先される', r.status === 200 && winning.runId === firstRun.runId && winning.gems === 4);
+await r.arrayBuffer();
+r = await put({ save: { ...secondRun, resetAt: Number.MAX_SAFE_INTEGER, runId: '9-' + 'f'.repeat(32) }, revision: 3 }, S2, ORIGIN, 'C');
+const saturated = await r.json();
+r = await put({ save: { ...firstRun, resetAt: Number.MAX_SAFE_INTEGER, runId: '10-' + '0'.repeat(32) }, revision: saturated.revision }, S2, ORIGIN, 'C');
+winning = await getSlot('C', S2);
+check('世代時刻が飽和しても、カウンタを桁上げして次の新しい冒険を保存できる',
+  r.status === 200 && winning.runId.startsWith('10-') && winning.gems === 4);
+await r.arrayBuffer();
+r = await put({ save: { ...save, resetAt: 70, gems: 16383, revealed: 31, bestMs: 150000 } }, S2); await r.arrayBuffer();
 r = await call('/api/leaderboard', {}, S);
 lb = (await r.json()).entries;
 check('ランキングは速い順', lb.length === 2 && lb[0].name === 'ふたりめ' && lb[1].me === true && lb[1].rank === 2);
@@ -157,9 +316,23 @@ console.log('ログアウト');
 r = await call('/api/auth/logout', { method: 'POST' }, S);
 check('Origin なしのログアウトは 403', r.status === 403); await r.arrayBuffer();
 r = await call('/api/auth/logout', { method: 'POST', headers: { Origin: ORIGIN } }, S);
+check('所有者を指定しないログアウトはセッションを削除しない',
+  r.status === 428 && !cookieOf(r, '__Host-si_session') && (await r.json()).error === 'owner_required' && (await (await call('/api/me', {}, S)).json()).user.id === me.id);
+r = await call('/api/auth/logout', { method: 'POST', headers: { Origin: ORIGIN, 'X-Splash-Owner': me.id } }, S2);
+check('別タブでログイン先が変わった場合は、どちらのセッションも Cookie も消さない',
+  r.status === 409 && !cookieOf(r, '__Host-si_session') && (await r.json()).error === 'account_changed' &&
+  (await (await call('/api/me', {}, S2)).json()).user.name === 'ふたりめ' && (await (await call('/api/me', {}, S)).json()).user.id === me.id);
+r = await call('/api/auth/logout', { method: 'POST', headers: { Origin: ORIGIN, 'X-Splash-Owner': me.id } });
+check('すでにログアウト済みなら別の応答で Cookie を消さない', r.status === 409 && !cookieOf(r, '__Host-si_session') && (await r.json()).error === 'account_changed');
+r = await call('/api/auth/logout', { method: 'POST', headers: { Origin: ORIGIN, 'X-Splash-Owner': me.id } }, S);
 check('ログアウトで Cookie を消す', r.status === 200 && /Max-Age=0/.test(cookieOf(r, '__Host-si_session'))); await r.arrayBuffer();
 r = await call('/api/me', {}, S);
 check('ログアウト後は古い Cookie が無効', (await r.json()).user === null);
+
+await mf.setOptions(workerOptions({}));
+r = await call('/api/me');
+const localSession = await r.json();
+check('OAuth 未設定の Worker でもゲストで使え、ログイン機能は無効', r.status === 200 && localSession.user === null && localSession.loginAvailable === false);
 
 console.log(`\n${pass} passed, ${failN} failed`);
 await mf.dispose();
