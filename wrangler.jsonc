@@ -19,7 +19,7 @@
     {
       "binding": "DB",
       "database_name": "splash-isle",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "abdf62c7-8bb7-4654-af3a-4843e5dbdab0",
       "migrations_dir": "migrations"
     }
   ],
